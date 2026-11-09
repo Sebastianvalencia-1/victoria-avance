@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Edificio Victoria · Control de avance</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f4f4f2;--card:#fff;--tx:#1f2326;--mut:#6b7177;--bd:#dcdcd8;--hd:#2b2f33;--ac:#c62828;--g:#2e9d57;--y:#e0a800;--r:#d33a3a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17191b;--card:#212427;--tx:#e8e8e6;--mut:#9aa0a6;--bd:#34383c;--hd:#0f1112}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:var(--hd);color:#fff;padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+header b{font-size:16px}nav{display:flex;gap:4px;flex:1;flex-wrap:wrap}
+nav button,.btn{border:0;border-radius:6px;padding:8px 12px;font:inherit;cursor:pointer;background:transparent;color:inherit}
+nav button{color:#ddd}nav button.on{background:var(--ac);color:#fff}
+.btn{background:var(--ac);color:#fff}.btn.alt{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
+main{max-width:1100px;margin:0 auto;padding:14px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.grid.w{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px}
+.kpi .n{font-size:26px;font-weight:700}.kpi .l{color:var(--mut);font-size:12px}
+h2{margin:18px 0 8px;font-size:17px}h3{margin:0 0 6px;font-size:15px}
+.bar{height:10px;background:var(--bd);border-radius:6px;overflow:hidden;position:relative}
+.bar i{display:block;height:100%}.bar u{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--tx)}
+.g{background:var(--g)}.y{background:var(--y)}.r{background:var(--r)}
+.tag{font-size:11px;padding:2px 7px;border-radius:10px;color:#fff;white-space:nowrap}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.dep{cursor:pointer;border-left:6px solid var(--bd)}.dep.g{border-left-color:var(--g)}.dep.y{border-left-color:var(--y)}.dep.r{border-left-color:var(--r)}
+.dep.g,.dep.y,.dep.r{background:var(--card)}
+.pt{padding:10px 0;border-bottom:1px solid var(--bd)}
+.pcts{display:flex;gap:4px;margin-top:6px}
+.pcts button{flex:1;padding:9px 0;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);font:inherit;cursor:pointer}
+.pcts button.on{color:#fff;border-color:transparent;font-weight:700}
+.pcts button.on.p0{background:var(--r)}.pcts button.on.p25,.pcts button.on.p50,.pcts button.on.p75{background:var(--y)}.pcts button.on.p100{background:var(--g)}
+.mut{color:var(--mut);font-size:12px}
+input,select{font:inherit;padding:9px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--tx);width:100%}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;border-bottom:1px solid var(--bd);text-align:left}
+.wrap{overflow-x:auto}
+.login{max-width:340px;margin:12vh auto;display:grid;gap:10px}
+.warn{background:#fff3cd;color:#5c4400;padding:8px 10px;border-radius:6px;font-size:13px}
+.cols{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ===== CONFIGURACIÓN: reemplaza SOLO el texto entre comillas ===== */
+var SUPABASE_URL = "https://qmbgdhpkcenvzqgmfjfy.supabase.co";
+var SUPABASE_KEY = "sb_publishable_nkW45OtQB1Q42OC64mSYeA_PL09lgH_";
+/* ================================================================= */
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+// ===== Datos extraídos de los PDF (Programa de término piso 6, estado al 2 nov 2026) =====
+// [nombre, dias, inicio(día nov), término(día nov), ejecutadaInicial]
+const SA=[["Instalaciones eléctricas muros",5,0,0,1],["Tabiques segunda cara",5,0,0,1],["Nivelación de piso",0,0,0,1],["Instalación de refuerzos muro",4,3,6],["Estructura de cielo",5,4,10],["Impermeabilización",1,4,4],["Vertical y horizontal extracción clima",5,9,13],["Instalaciones eléctricas cielo",5,9,13],["Instalaciones clima",5,9,13],["Instalación sanitaria",10,9,20],["Shaft y embarrilado",5,9,13],["Instalación de receptáculo",3,9,11],["Tapado de cielos",5,16,20],["Instalación cerámica piso",4,16,19],["Instalación puertas acceso",3,16,18],["Instalación puerta baño",3,16,18],["Instalación piso vinílico",5,17,23],["Instalación quincallería",3,17,19],["Instalación cerámica muro",4,18,23],["Fraguado",1,18,18],["Instalación guardapolvos",5,18,24],["Instalación muebles",5,18,24],["Instalación artefactos",3,19,23],["Instalación shower",3,20,24],["Instalación CCDD",5,23,27],["Pasta y huincha",5,23,27],["Pintura",5,24,30]];
+const HU=[["Instalaciones eléctricas muros",5,0,0,1],...SA.slice(3,12),["Cierre tabiques cielo",5,16,20],...SA.slice(13,23),...SA.slice(24),["Tabiques segunda cara",5,0,0],["Nivelación de piso",0,0,0]];
+const SECT={SA:{n:"San Antonio",P:SA,d:[603,604,605,606,607,608,609,610,611,612]},HU:{n:"Huérfanos",P:HU,d:[613,614,615,616,617,618,619,620,621,622]}};
+const DEPTS=[];for(const k in SECT)SECT[k].d.forEach(n=>DEPTS.push({n,s:k}));
+const STEPS=[0,25,50,75,100];
+const isSA=()=>me&&(me.role==="sa_edit"||me.role==="sa_lectura");
+const canWrite=dn=>{if(!me||me.role==="lectura"||me.role==="sa_lectura")return false;if(me.role==="sa_edit")return SECT.SA.d.includes(dn);return true};
+const allowed=v=>{if(me.role==="admin")return true;if(isSA())return v==="dash"||v==="SA"||v==="hist"||(v==="dep"&&SECT.SA.d.includes(sel));return v!=="inf"&&v!=="admin"};
+const DEADLINE=30;
+// ===== util =====
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const wk=d=>{const m=d%7;return m!==0&&m!==1};
+const bd=(a,b)=>{let c=0;for(let d=a;d<=b;d++)if(wk(d))c++;return c};
+function today(){const t=new Date();const y=t.getFullYear(),m=t.getMonth();if(y<2026||(y===2026&&m<10))return 0;if(y>2026||m>10)return 31;return t.getDate()}
+function expected(p,D){if(!p[2])return null;if(D<p[2])return 0;if(D>p[3])return 100;return Math.round(100*bd(p[2],D)/Math.max(1,bd(p[2],p[3])))}
+const fmt=d=>d?d+" nov":"—";
+const col=p=>p>=100?"g":p>0?"y":"r";
+const hf=t=>new Date(t).toLocaleString("es-CL",{dateStyle:"short",timeStyle:"short"});
+async function sha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+// ===== estado =====
+let db,me=null,view="dash",sel=null,prog={},logs=[],users=[],dl=null,ready=false,loadErr="";
+const defv=(dn,i)=>SECT[DEPTS.find(x=>x.n===dn).s].P[i][4]?100:0;
+const val=(dn,i)=>{const v=(prog["d"+dn]||{})[i];return v===undefined?defv(dn,i):v};
+function dstat(dn){const D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,t=today();let sum=0,done=0,run=0,pend=0,es=0,ec=0,late=0,vencidas=[];
+ P.forEach((p,i)=>{const v=val(dn,i);sum+=v;v>=100?done++:v>0?run++:pend++;const e=expected(p,t);if(e!==null){es+=e;ec++;if(v<e-25||(p[3]&&t>p[3]&&v<100))late++;if(p[3]&&t>p[3]&&v<100)vencidas.push(p)}});
+ const avg=sum/P.length,exp=ec?es/ec:0;// esperado promedio sobre partidas con fecha, real comparable sobre las mismas
+ let rs=0;P.forEach((p,i)=>{if(p[2])rs+=val(dn,i)});const rc=ec?rs/ec:0,dev=rc-exp;
+ const state=dev>=10?"Adelantado":dev>=-15?"Conforme":"Atrasado";
+ return{dn,s:D.s,avg,done,run,pend,tot:P.length,exp,dev,state,late,vencidas,risk:state==="Atrasado"||late>0}}
+const all=()=>DEPTS.map(d=>dstat(d.n));
+const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+// ===== persistencia =====
+const chain={};
+let inflight=0;
+function save(dn,i,to){const from=val(dn,i);if(from===to||!me||!canWrite(dn))return;
+ prog["d"+dn]={...(prog["d"+dn]||{}),[i]:to};inflight++;render();
+ chain[dn]=(chain[dn]||Promise.resolve()).then(async()=>{const r=await sb.rpc("set_avance",{p_dept:dn,p_i:i,p_to:to,p_part:SECT[DEPTS.find(x=>x.n===dn).s].P[i][0]});if(r.error)throw r.error}).catch(e=>{alert("No se pudo guardar: "+e.message);sig=""}).finally(()=>{inflight--;poll()})}
+// ===== vistas =====
+function bar(p,exp){return`<div class="bar"><i class="${col(p)}" style="width:${p}%"></i>${exp!=null?`<u style="left:${exp}%" title="Programado ${Math.round(exp)}%"></u>`:""}</div>`}
+const stTag=s=>`<span class="tag ${s==="Atrasado"?"r":s==="Adelantado"?"g":"y"}" style="${s==="Conforme"?"background:#4a7fb5":""}">${s}</span>`;
+function dash(){const A=all(),t=today();const sa=A.filter(x=>x.s==="SA"),hu=A.filter(x=>x.s==="HU");
+ const term=A.filter(x=>x.avg>=100).length,ej=A.filter(x=>x.avg>0&&x.avg<100).length,pen=A.filter(x=>x.avg===0).length;
+ const pT=A.reduce((a,x)=>a+x.done,0),pR=A.reduce((a,x)=>a+x.run,0),pP=A.reduce((a,x)=>a+x.pend,0);
+ const tot=mean(A.map(x=>x.avg)),exp=mean(A.map(x=>x.exp)),dev=tot-exp,left=Math.max(0,DEADLINE-t),bl=t>DEADLINE?0:bd(Math.max(t,1),DEADLINE);
+ const cumple=dev>=-5?"En curso de cumplir":dev>=-15?"En riesgo":"Riesgo alto de incumplir";
+ const k=(n,l)=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+ return`<div class="grid">${k(20,"Departamentos")}${k(term,"Terminados")}${k(ej,"En ejecución")}${k(pen,"Pendientes")}${k(pT,"Partidas terminadas")}${k(pR,"Partidas en ejecución")}${k(pP,"Partidas pendientes")}</div>
+ <h2>Avance y cumplimiento · entrega 30.11.2026</h2><div class="cols">
+ <div class="card"><h3>Avance general: ${tot.toFixed(1)}%</h3>${bar(tot,exp)}<div class="mut">Línea negra = avance programado hoy (${exp.toFixed(1)}%)</div>
+ <p>${stTag(dev>=10?"Adelantado":dev>=-15?"Conforme":"Atrasado")} Desvío: ${dev>=0?"+":""}${dev.toFixed(1)} pts</p></div>
+ <div class="card"><h3>Fecha de entrega</h3><div class="kpi"><div class="n">${left} días</div><div class="l">corridos al 30 nov · ${bl} hábiles</div></div><p><span class="tag ${dev>=-5?"g":dev>=-15?"y":"r"}">${cumple}</span></p></div>
+ <div class="card"><h3>San Antonio vs Huérfanos</h3>${[["San Antonio",sa],["Huérfanos",hu]].map(([n,a])=>`<div class="row"><span>${n}</span><b>${mean(a.map(x=>x.avg)).toFixed(1)}%</b></div>${bar(mean(a.map(x=>x.avg)),mean(a.map(x=>x.exp)))}<div style="height:8px"></div>`).join("")}</div></div>
+ <h2>Avance por departamento</h2><div class="card">${[...A].sort((a,b)=>a.dn-b.dn).map(x=>`<div class="row" style="margin:5px 0;cursor:pointer" onclick="openDep(${x.dn})"><span style="width:46px"><b>${x.dn}</b></span><div style="flex:1">${bar(x.avg,x.exp)}</div><span style="width:48px;text-align:right">${x.avg.toFixed(0)}%</span>${stTag(x.state)}</div>`).join("")}</div>
+ <h2>Departamentos con riesgo</h2><div class="card">${A.filter(x=>x.risk).sort((a,b)=>a.dev-b.dev).map(x=>`<div class="row pt" onclick="openDep(${x.dn})" style="cursor:pointer"><span><b>Depto ${x.dn}</b> · ${SECT[x.s].n}<br><span class="mut">${x.late} partida(s) atrasada(s) · ${x.vencidas.length} vencida(s)</span></span><span>${x.dev.toFixed(0)} pts ${stTag(x.state)}</span></div>`).join("")||"<span class='mut'>Sin departamentos en riesgo según la programación.</span>"}</div>`}
+function sector(k){const S=SECT[k],A=S.d.map(dstat);return`<h2>${S.n} · ${mean(A.map(x=>x.avg)).toFixed(1)}%</h2><div class="grid w">${A.map(x=>`<div class="card dep ${col(x.avg)}" onclick="openDep(${x.dn})"><div class="row"><h3>Depto ${x.dn}</h3>${stTag(x.state)}</div><div style="font-size:24px;font-weight:700">${x.avg.toFixed(0)}%</div>${bar(x.avg,x.exp)}<div class="mut" style="margin-top:6px">Terminadas ${x.done} · En ejecución ${x.run} · Pendientes ${x.pend}</div></div>`).join("")}</div>`}
+function depto(){const dn=sel,D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,s=dstat(dn),t=today(),canEdit=canWrite(dn);
+ return`<button class="btn alt" onclick="view='${D.s}';render()">← ${SECT[D.s].n}</button><h2>Departamento ${dn} · ${s.avg.toFixed(1)}% ${stTag(s.state)}</h2>${bar(s.avg,s.exp)}
+ <div class="card" style="margin-top:10px">${P.map((p,i)=>{const v=val(dn,i),e=expected(p,t),venc=p[3]&&t>p[3]&&v<100,late=e!==null&&v<e-25;
+ return`<div class="pt"><div class="row"><b>${esc(p[0])}</b><span class="tag ${col(v)}">${v}%</span></div><div class="mut">${p[2]?`${p[1]?p[1]+" días · ":""}${fmt(p[2])} → ${fmt(p[3])}${e!==null?` · programado hoy ${e}%`:""}`:"Sin fecha programada (revisar)"}${venc?' · <b style="color:var(--r)">VENCIDA</b>':late?' · <b style="color:var(--r)">atrasada</b>':""}</div>
+ <div class="pcts">${STEPS.map(q=>`<button class="p${q}${v===q?" on":""}" ${canEdit?`onclick="save(${dn},${i},${q})"`:"disabled"}>${q}%</button>`).join("")}</div></div>`}).join("")}</div>`}
+function hist(){return`<h2>Historial de actualizaciones</h2><div class="card wrap"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${logs.map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6 class=mut>Sin cambios registrados.</td></tr>"}</table></div>`}
+function admin(){return`<h2>Usuarios</h2><div class="card"><div class="cols"><input id="nu" placeholder="Usuario"><input id="nn" placeholder="Nombre"><input id="np" placeholder="Contraseña (mín. 6)"><select id="nr"><option value="editor">Editor (actualiza avances)</option><option value="lectura">Solo lectura</option><option value="sa_edit">San Antonio (actualiza avances)</option><option value="sa_lectura">San Antonio (solo lectura)</option><option value="admin">Administrador</option></select></div><p><button class="btn" onclick="addUser()">Crear usuario</button></p>
+ <div class="wrap"><table><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th></tr>${users.map(u=>`<tr><td>${esc(u.user)}</td><td>${esc(u.name)}</td><td><select onchange="setRole('${u.id}',this.value)">${["admin","editor","lectura","sa_edit","sa_lectura"].map(r=>`<option ${r===u.role?"selected":""}>${r}</option>`).join("")}</select></td><td><button class="btn alt" onclick="setActive('${u.id}',${!u.active})">${u.active?"Activo · desactivar":"Inactivo · activar"}</button></td></tr>`).join("")}</table></div></div>
+ <div class="warn" style="margin-top:10px">Los permisos se validan en la base de datos (Supabase). Para restablecer la clave de otra persona usa Authentication → Users en el panel de Supabase.</div>`}
+async function setRole(id,role){try{const r=await sb.from("profiles").update({role}).eq("id",id);if(r.error)throw r.error;sig="";poll()}catch(e){alert(e.message)}}
+async function setActive(id,active){try{const r=await sb.from("profiles").update({active}).eq("id",id);if(r.error)throw r.error;sig="";poll()}catch(e){alert(e.message)}}
+async function addUser(){const u=$("#nu").value.trim().toLowerCase(),p=$("#np").value;if(!/^[a-z0-9._-]{2,30}$/.test(u)||p.length<6)return alert("Usuario (letras/números) y contraseña de 6+ caracteres.");
+ try{const tmp=supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false,storageKey:"tmp"}});
+  const r=await tmp.auth.signUp({email:u+"@victoria.local",password:p,options:{data:{name:$("#nn").value.trim()||u}}});
+  if(r.error)throw r.error;const id=r.data.user&&r.data.user.id;if(!id||(r.data.user.identities&&!r.data.user.identities.length))throw new Error("Ese usuario ya existe");
+  const w=await sb.from("profiles").update({role:$("#nr").value,name:$("#nn").value.trim()||u,active:true}).eq("id",id);if(w.error)throw w.error;sig="";poll();alert("Usuario creado")}catch(e){alert("No se pudo crear: "+e.message)}}
+async function cambiarClave(){const n=prompt("Nueva contraseña (mín. 6):");if(!n)return;const r=await sb.auth.updateUser({password:n});alert(r.error?r.error.message:"Contraseña cambiada")}
+function login(){return`<div class="login card"><h2 style="margin:0">Edificio Victoria</h2><span class="mut">Control de avance · Piso 6</span><input id="lu" placeholder="Usuario" autocapitalize="none"><input id="lp" type="password" placeholder="Contraseña" onkeydown="if(event.key==='Enter')doLogin()"><button class="btn" onclick="doLogin()">Ingresar</button><div id="lerr" style="color:var(--r)"></div></div>`}
+async function doLogin(){try{if(!sb)throw new Error(initErr||"Sin conexión con Supabase todavía. Recarga la página.");const r=await sb.auth.signInWithPassword({email:$("#lu").value.trim().toLowerCase().split("@")[0]+"@victoria.local",password:$("#lp").value});if(r.error){const m=r.error.message||"";throw new Error(/invalid login/i.test(m)?"Usuario o contraseña incorrectos (o el usuario no existe en Supabase)":/not confirmed/i.test(m)?"El usuario existe pero no está confirmado. En Supabase: Authentication → Users → confirma el usuario o créalo con Auto Confirm.":"Supabase respondió: "+m)}const ok=await loadMe();if(!ok){await sb.auth.signOut();throw new Error("Usuario inactivo. Pide al administrador que lo active.")}sig="";await poll()}catch(e){$("#lerr").textContent=e.message}}
+function openDep(n){if(isSA()&&!SECT.SA.d.includes(n))return;sel=n;view="dep";render();scrollTo(0,0)}
+function logout(){sb.auth.signOut();me=null;render()}
+// ===== Excel =====
+async function exportXls(){const A=all(),t=today(),wb=XLSX.utils.book_new();const add=(n,rows)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),n);
+ add("Resumen",[{Indicador:"Fecha de reporte",Valor:new Date().toLocaleString("es-CL")},{Indicador:"Avance general %",Valor:+mean(A.map(x=>x.avg)).toFixed(1)},{Indicador:"Programado hoy %",Valor:+mean(A.map(x=>x.exp)).toFixed(1)},{Indicador:"San Antonio %",Valor:+mean(A.filter(x=>x.s==="SA").map(x=>x.avg)).toFixed(1)},{Indicador:"Huérfanos %",Valor:+mean(A.filter(x=>x.s==="HU").map(x=>x.avg)).toFixed(1)},{Indicador:"Entrega",Valor:"30-11-2026"}]);
+ add("Departamentos",A.map(x=>({Depto:x.dn,Sector:SECT[x.s].n,"Avance %":+x.avg.toFixed(1),"Programado %":+x.exp.toFixed(1),"Desvío pts":+x.dev.toFixed(1),Estado:x.state,Terminadas:x.done,"En ejecución":x.run,Pendientes:x.pend,"Partidas atrasadas":x.late})));
+ const pr=[];A.forEach(x=>SECT[x.s].P.forEach((p,i)=>pr.push({Depto:x.dn,Sector:SECT[x.s].n,Partida:p[0],Inicio:fmt(p[2]),Término:fmt(p[3]),"Avance %":val(x.dn,i),"Programado %":expected(p,t)??"Sin fecha"})));
+ add("Partidas",pr);add("Pendientes",pr.filter(r=>r["Avance %"]<100));
+ add("Historial",logs.map(l=>({Fecha:hf(l.t),Depto:l.dept,Partida:l.part,Anterior:l.from,Nuevo:l.to,Usuario:l.name||l.user})));
+ const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});try{const d=await claude.use("downloads");await d.save({filename:"Avance_Victoria.xlsx",data:buf})}catch(e){alert("No se pudo descargar")}}
+// ===== Informes PDF =====
+function informes(){const b=(k,t,d)=>`<div class="card"><h3>${t}</h3><div class="mut" style="margin-bottom:8px">${d}</div><button class="btn" onclick="pdf('${k}',this)">Descargar PDF</button></div>`;
+ return`<h2>Informes en PDF (con colores y barras de avance)</h2><div class="cols">${b('dash','Dashboard','Indicadores, cumplimiento al 30.11.2026, sectores, avance por departamento y riesgos.')}${b('SA','Sector San Antonio','Tarjetas de los 10 departamentos.')}${b('HU','Sector Huérfanos','Tarjetas de los 10 departamentos.')}${b('hist','Historial','Registro de modificaciones (últimas 300).')}${b('full','Informe completo','Dashboard, ambos sectores y detalle de partidas de los 20 departamentos.')}</div><p class="mut">El PDF se genera siempre con tema claro para que se imprima bien. Para planillas usa el botón Excel.</p>`}
+function deptoPrint(dn){const D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,s=dstat(dn),t=today();
+ return`<div class="sec"><h2>Departamento ${dn} · ${SECT[D.s].n} · ${s.avg.toFixed(1)}% ${stTag(s.state)}</h2><div class="card"><table><tr><th>Partida</th><th>Programada</th><th>Prog. hoy</th><th style="width:32%">Avance</th></tr>${P.map((p,i)=>{const v=val(dn,i),e=expected(p,t);return`<tr><td>${esc(p[0])}</td><td>${p[2]?fmt(p[2])+" → "+fmt(p[3]):"Sin fecha"}</td><td>${e===null?"—":e+"%"}</td><td><div class="row"><div style="flex:1">${bar(v,e)}</div><b>${v}%</b></div></td></tr>`}).join("")}</table></div></div>`}
+function histSecs(){let o="";for(let i=0;i<Math.max(logs.length,1);i+=35)o+=`<div class="sec">${i?"":"<h2>Historial de actualizaciones</h2>"}<div class="card"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${logs.slice(i,i+35).map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6>Sin cambios registrados.</td></tr>"}</table></div></div>`;return o}
+async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"Huérfanos",hist:"Historial",full:"Informe completo"};
+ const old=btn.textContent;btn.disabled=true;btn.textContent="Generando…";
+ const w=document.createElement("div");w.style.cssText="position:fixed;left:-10000px;top:0;width:1000px;padding:16px;background:#fff;color:#1f2326;--bg:#f4f4f2;--card:#fff;--tx:#1f2326;--mut:#6b7177;--bd:#dcdcd8;--g:#2e9d57;--y:#e0a800;--r:#d33a3a;--ac:#c62828;font:15px/1.4 system-ui,sans-serif";
+ let h=`<div class="sec"><h1 style="margin:0">Edificio Victoria · Piso 6</h1><div class="mut">${names[kind]} · entrega 30.11.2026 · generado ${new Date().toLocaleString("es-CL")} por ${esc(me.name)}</div></div>`;
+ if(kind==="dash"||kind==="full")h+=`<div class="sec">${dash()}</div>`;
+ if(kind==="SA"||kind==="full")h+=`<div class="sec">${sector("SA")}</div>`;
+ if(kind==="HU"||kind==="full")h+=`<div class="sec">${sector("HU")}</div>`;
+ if(kind==="full")DEPTS.forEach(d=>h+=deptoPrint(d.n));
+ if(kind==="hist")h+=histSecs();
+ w.innerHTML=h;document.body.appendChild(w);
+ try{const doc=new jspdf.jsPDF({unit:"mm",format:"a4"});let y=10,first=true;
+  for(const sec of w.querySelectorAll(".sec")){const c=await html2canvas(sec,{scale:2,backgroundColor:"#ffffff"}),hm=c.height*190/c.width;
+   if(hm<=277){if(y+hm>287&&!first){doc.addPage();y=10}doc.addImage(c.toDataURL("image/jpeg",.92),"JPEG",10,y,190,hm);y+=hm+4}
+   else{const ppp=277*c.width/190;if(!first){doc.addPage();y=10}for(let o=0;o<c.height;o+=ppp){if(o>0)doc.addPage();const sh=Math.min(ppp,c.height-o),s=document.createElement("canvas");s.width=c.width;s.height=sh;s.getContext("2d").drawImage(c,0,o,c.width,sh,0,0,c.width,sh);const m=sh*190/c.width;doc.addImage(s.toDataURL("image/jpeg",.92),"JPEG",10,10,190,m);y=10+m+4}}
+   first=false}
+  const d=await claude.use("downloads");await d.save({filename:"Victoria_"+names[kind].replace(/ /g,"_")+"_"+new Date().toISOString().slice(0,10)+".pdf",data:doc.output("arraybuffer")});
+ }catch(e){alert("No se pudo generar el PDF: "+(e&&e.message||e))}
+ w.remove();btn.disabled=false;btn.textContent=old}
+// ===== render =====
+function render(){const a=$("#app");if(!me){a.innerHTML=login();return}
+ if(!allowed(view))view="dash";
+ const tabs=isSA()?[["dash","Dashboard"],["SA","San Antonio"],["hist","Historial"]]:[["dash","Dashboard"],["SA","San Antonio"],["HU","Huérfanos"],["hist","Historial"],...(me.role==="admin"?[["inf","Informes PDF"],["admin","Usuarios"]]:[])];
+ const body=view==="dash"?dash():view==="SA"||view==="HU"?sector(view):view==="dep"?depto():view==="hist"?hist():view==="inf"?informes():admin();
+ a.innerHTML=`<header><b>Victoria · Piso 6</b><nav>${tabs.map(([k,n])=>`<button class="${view===k||(view==="dep"&&SECT[DEPTS.find(x=>x.n===sel).s]&&k===DEPTS.find(x=>x.n===sel).s)?"on":""}" onclick="view='${k}';render()">${n}</button>`).join("")}</nav>${isSA()?"":'<button class="btn alt" onclick="exportXls()">Excel</button>'}<span class="mut" style="color:#ccc">${esc(me.name)}</span><button class="btn alt" onclick="cambiarClave()">Clave</button><button class="btn alt" onclick="logout()">Salir</button></header><main>${body}</main>`}
+let sb=null,sig="",initErr="";
+async function loadMe(){const{data:{session}}=await sb.auth.getSession();if(!session)return false;const r=await sb.from("profiles").select("username,name,role,active").eq("id",session.user.id).single();if(r.error||!r.data||!r.data.active)return false;me={user:r.data.username,name:r.data.name||r.data.username,role:r.data.role};return true}
+async function poll(){if(!sb)return;try{if(!me&&!(await loadMe()))return;
+ const[a,l,u]=await Promise.all([sb.from("avance").select("dept,i,v"),sb.from("log").select("t,dept,i,part,frm,nuevo,username,name").order("t",{ascending:false}).limit(300),me.role==="admin"?sb.from("profiles").select("id,username,name,role,active").order("username"):Promise.resolve({data:[]})]);
+ if(a.error||l.error)throw a.error||l.error;
+ const p={};a.data.forEach(r=>{(p["d"+r.dept]??={})[r.i]=r.v});
+ const lg=l.data.map(x=>({t:new Date(x.t).getTime(),dept:x.dept,i:x.i,part:x.part,from:x.frm,to:x.nuevo,user:x.username,name:x.name}));
+ const us=(u.data||[]).map(x=>({id:x.id,user:x.username,name:x.name,role:x.role,active:x.active}));
+ const g=JSON.stringify([p,lg.length,lg[0]&&lg[0].t,us,me]);logs=lg;users=us;if(inflight===0)prog=p;ready=true;
+ const f=document.activeElement;if((g!==sig||!$("header"))&&!(f&&["nu","nn","np"].includes(f.id))){sig=g;render()}}catch(e){}}
+window.claude={use:async()=>({save:async({filename,data})=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data]));a.download=filename;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}})};
+(async function init(){render();
+ if(SUPABASE_URL.startsWith("PEGA")){$("#lerr").textContent="Falta configurar SUPABASE_URL y SUPABASE_KEY al inicio de este script.";return}
+ try{if(typeof supabase==="undefined")throw new Error("No cargó la librería de Supabase (revisa internet o desactiva el bloqueador de anuncios)");
+  var U=String(SUPABASE_URL).trim().replace(/\/+$/,""),K=String(SUPABASE_KEY).trim();
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(U))throw new Error("La URL no es válida. Debe ser solo https://XXXX.supabase.co (sin /rest/v1 ni nada más). Se leyó: "+U.slice(0,60));
+  if(K.length<30)throw new Error("La clave parece incompleta (largo "+K.length+")");
+  sb=supabase.createClient(U,K)}catch(e){initErr=e.message;$("#lerr").textContent=initErr;return}
+ let t=null;const deb=()=>{clearTimeout(t);t=setTimeout(poll,300)};
+ sb.channel("victoria").on("postgres_changes",{event:"*",schema:"public",table:"avance"},deb).on("postgres_changes",{event:"*",schema:"public",table:"log"},deb).subscribe();
+ await poll();setInterval(poll,20000)})();
+</script>
+</body>
+</html>
