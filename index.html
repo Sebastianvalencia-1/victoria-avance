@@ -40,6 +40,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;borde
 .login{max-width:340px;margin:12vh auto;display:grid;gap:10px}
 .warn{background:#fff3cd;color:#5c4400;padding:8px 10px;border-radius:6px;font-size:13px}
 .cols{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:16px;padding:6px 12px;font:inherit;cursor:pointer}.chips button.on{background:var(--hd);color:#fff}
 </style>
 </head>
 <body>
@@ -71,8 +72,8 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const wk=d=>{const m=d%7;return m!==0&&m!==1};
 const bd=(a,b)=>{let c=0;for(let d=a;d<=b;d++)if(wk(d))c++;return c};
-function today(){const t=new Date();const y=t.getFullYear(),m=t.getMonth();if(y<2026||(y===2026&&m<10))return 0;if(y>2026||m>10)return 31;return t.getDate()}
-function expected(p,D){if(!p[2])return null;if(D<p[2])return 0;if(D>p[3])return 100;return Math.round(100*bd(p[2],D)/Math.max(1,bd(p[2],p[3])))}
+let FAKE=null;function today(){if(FAKE!==null)return FAKE;const t=new Date();const y=t.getFullYear(),m=t.getMonth();if(y<2026||(y===2026&&m<10))return 0;if(y>2026||m>10)return 31;return t.getDate()}
+function expected(p,D){if(p[4])return 100;if(!p[2])return null;if(D<p[2])return 0;if(D>p[3])return 100;return Math.round(100*bd(p[2],D)/Math.max(1,bd(p[2],p[3])))}
 const fmt=d=>d?d+" nov":"—";
 const col=p=>p>=100?"g":p>0?"y":"r";
 const hf=t=>new Date(t).toLocaleString("es-CL",{dateStyle:"short",timeStyle:"short"});
@@ -81,14 +82,62 @@ async function sha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncod
 let db,me=null,view="dash",sel=null,prog={},logs=[],users=[],dl=null,ready=false,loadErr="";
 const defv=(dn,i)=>SECT[DEPTS.find(x=>x.n===dn).s].P[i][4]?100:0;
 const val=(dn,i)=>{const v=(prog["d"+dn]||{})[i];return v===undefined?defv(dn,i):v};
-function dstat(dn){const D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,t=today();let sum=0,done=0,run=0,pend=0,es=0,ec=0,late=0,vencidas=[];
- P.forEach((p,i)=>{const v=val(dn,i);sum+=v;v>=100?done++:v>0?run++:pend++;const e=expected(p,t);if(e!==null){es+=e;ec++;if(v<e-25||(p[3]&&t>p[3]&&v<100))late++;if(p[3]&&t>p[3]&&v<100)vencidas.push(p)}});
- const avg=sum/P.length,exp=ec?es/ec:0;// esperado promedio sobre partidas con fecha, real comparable sobre las mismas
- let rs=0;P.forEach((p,i)=>{if(p[2])rs+=val(dn,i)});const rc=ec?rs/ec:0,dev=rc-exp;
- const state=dev>=10?"Adelantado":dev>=-15?"Conforme":"Atrasado";
- return{dn,s:D.s,avg,done,run,pend,tot:P.length,exp,dev,state,late,vencidas,risk:state==="Atrasado"||late>0}}
-const all=()=>DEPTS.map(d=>dstat(d.n));
+// ===== CALC =====
+const TOL=5,STALE=3,PROX=5;
+let LA=[],mo=[],moErr="";
+const ymd=t=>{const d=new Date(t),y=d.getFullYear(),m=d.getMonth();if(y<2026||(y===2026&&m<10))return 0;if(y>2026||m>10)return 99;return d.getDate()};
+const dayStr=d=>"2026-11-"+String(d).padStart(2,"0");
+const dayOf=s=>{const m=s.slice(0,7);return m==="2026-11"?+s.slice(8,10):(s<"2026-11"?0:99)};
 const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0;
+const sum=a=>a.reduce((x,y)=>x+y,0);
+const sv=(S,dn,i)=>{const v=(S[dn]||{})[i];return v===undefined?defv(dn,i):v};
+// estados acumulados al cierre de cada día (0 = antes de noviembre), reconstruidos desde el historial (LA ordenado por id)
+function snapsUpTo(n){const out=[],cur={};let k=0;for(let d=0;d<=n;d++){while(k<LA.length&&ymd(LA[k].t)<=d){const l=LA[k++];(cur[l.dept]??={})[l.i]=l.to}out[d]=JSON.parse(JSON.stringify(cur))}return out}
+function progAt(P,d){let s=0,c=0;P.forEach(p=>{const e=expected(p,d);if(e!==null){s+=e;c++}});return c?s/c:0}
+// días hábiles de atraso (−) o adelanto (+): compara el avance real con la curva programada
+function lagDays(f,rc,D){const cur=f(D);if(Math.abs(rc-cur)<0.5)return 0;
+ if(rc<cur){let d=D;while(d>1&&f(d)>rc)d--;return -bd(d+1,D)}
+ let d=D+1;while(d<DEADLINE&&f(d)<rc)d++;return bd(D+1,d)}
+const stateOf=dev=>dev>TOL?"Adelantado":dev>=-TOL?"Conforme":"Atrasado";
+function dstat(dn,D=today(),S=null){const Dp=DEPTS.find(x=>x.n===dn),P=SECT[Dp.s].P,g=i=>S?sv(S,dn,i):val(dn,i);
+ let sm=0,done=0,run=0,pend=0,es=0,rs=0,ec=0,late=0;const venc=[],nodate=[];
+ P.forEach((p,i)=>{const v=g(i);sm+=v;v>=100?done++:v>0?run++:pend++;const e=expected(p,D);
+  if(e===null){nodate.push(p[0]);return}
+  es+=e;rs+=v;ec++;const vv=p[3]&&D>p[3]&&v<100;if(vv)venc.push({i,p,v});if(vv||v<e-25)late++});
+ const avg=sm/P.length,exp=ec?es/ec:0,rc=ec?rs/ec:0,dev=rc-exp,state=stateOf(dev);
+ return{dn,s:Dp.s,avg,done,run,pend,tot:P.length,exp,rc,dev,state,late,vencidas:venc,nodate,risk:state==="Atrasado"||late>0,dd:lagDays(d=>progAt(P,d),rc,D)}}
+const all=(D=today(),S=null)=>DEPTS.map(d=>dstat(d.n,D,S));
+const lagAll=(A,D)=>lagDays(d=>mean(A.map(x=>progAt(SECT[x.s].P,d))),mean(A.map(x=>x.rc)),D);
+function lastMods(){const m={};for(const l of LA)m[l.dept+"|"+l.i]=l.t;return m}
+function alertItems(D=today()){const A=all(D),LM=lastMods(),late=[],stale=[];
+ A.forEach(x=>SECT[x.s].P.forEach((p,i)=>{const v=val(x.dn,i),e=expected(p,D);if(e===null||p[4]||v>=100)return;
+  const venc=p[3]&&D>p[3];if(venc||v<e-25)late.push({dn:x.dn,s:x.s,i,name:p[0],v,e,end:p[3],dv:venc?bd(p[3]+1,D):0});
+  if(p[2]&&D>=p[2]){const lm=LM[x.dn+"|"+i],ds=lm?bd(Math.max(ymd(lm),1)+1,D):bd(p[2],D)-1;if(ds>=STALE)stale.push({dn:x.dn,s:x.s,i,name:p[0],v,ds,never:!lm})}}));
+ late.sort((a,b)=>b.dv-a.dv||a.v-b.v);stale.sort((a,b)=>b.ds-a.ds);return{A,late,stale}}
+// especialidades vinculadas (según registros reales de mano de obra) a partidas atrasadas
+function espNeeds(late){const m={};late.forEach(l=>{const es=new Set();mo.filter(r=>r.dept===l.dn&&r.part_i===l.i).forEach(r=>es.add(r.especialidad));es.forEach(e=>{(m[e]??={e,n:0,td:0});m[e].n++});});
+ mo.forEach(r=>{if(late.some(l=>l.dn===r.dept&&l.i===r.part_i)){(m[r.especialidad]??={e:r.especialidad,n:0,td:0}).td+=r.cantidad}});return Object.values(m).sort((a,b)=>b.n-a.n||b.td-a.td)}
+function dayChanges(D){const sn=snapsUpTo(Math.min(D,30)),S0=sn[Math.max(D-1,0)],S1=sn[Math.min(D,30)],net={};
+ LA.filter(l=>ymd(l.t)===D).forEach(l=>{const k=l.dept+"|"+l.i;(net[k]??={dept:l.dept,i:l.i,part:l.part,users:new Set(),n:0});net[k].users.add(l.name||l.user);net[k].n++});
+ const rows=Object.values(net).map(r=>({...r,from:sv(S0,r.dept,r.i),to:sv(S1,r.dept,r.i),users:[...r.users].join(", ")}));return{S0,S1,rows,sn}}
+function evo(sn,Dmax,dn){const o=[];for(let d=1;d<=Dmax;d++){const A=dn?[dstat(dn,d,sn[d])]:all(d,sn[d]);o.push({d,real:mean(A.map(x=>x.avg)),prog:mean(A.map(x=>x.exp)),dev:mean(A.map(x=>x.dev))})}return o}
+const curD=()=>Math.min(Math.max(today(),1),30);
+const lagTxt=n=>n===0?"al día":n<0?`≈ ${-n} día(s) háb. de atraso`:`≈ ${n} día(s) háb. de adelanto`;
+// datos de Excel: se construyen con las mismas funciones que usa la pantalla
+function excelData(){const D=today(),Dc=curD(),A=all(D),sn=snapsUpTo(Dc),AL=alertItems(D),dc=dayChanges(Dc),sa=A.filter(x=>x.s==="SA"),hu=A.filter(x=>x.s==="HU");
+ const r1=n=>+n.toFixed(1);
+ const S={};
+ S["Resumen"]=[["Fecha de reporte",new Date().toLocaleString("es-CL")],["Avance general real %",r1(mean(A.map(x=>x.avg)))],["Avance general programado %",r1(mean(A.map(x=>x.exp)))],["Desvío (pts)",r1(mean(A.map(x=>x.dev)))],["Días háb. atraso(−)/adelanto(+)",lagAll(A,D)],["San Antonio real %",r1(mean(sa.map(x=>x.avg)))],["Huérfanos real %",r1(mean(hu.map(x=>x.avg)))],["Partidas atrasadas",AL.late.length],["Partidas sin movimiento",AL.stale.length],["Entrega","30-11-2026"]].map(([Indicador,Valor])=>({Indicador,Valor}));
+ S["Departamentos"]=A.map(x=>({Depto:x.dn,Sector:SECT[x.s].n,"Avance real %":r1(x.avg),"Programado %":r1(x.exp),"Desvío pts":r1(x.dev),Estado:x.state,"Días háb. atraso(−)/adelanto(+)":x.dd,Terminadas:x.done,"En ejecución":x.run,Pendientes:x.pend,"Partidas atrasadas":x.late,"Partidas sin fecha":x.nodate.length}));
+ const pr=[];A.forEach(x=>SECT[x.s].P.forEach((p,i)=>{const e=expected(p,D);pr.push({Depto:x.dn,Sector:SECT[x.s].n,Partida:p[0],Inicio:p[4]?"Ejecutada":fmt(p[2]),Término:p[4]?"Ejecutada":fmt(p[3]),"Avance real %":val(x.dn,i),"Programado %":e===null?"Pendiente de configuración":e})}));
+ S["Partidas"]=pr;S["Pendientes"]=pr.filter(r=>r["Avance real %"]<100);
+ S["Avance por fecha"]=[];for(let d=1;d<=Dc;d++)all(d,sn[d]).forEach(x=>S["Avance por fecha"].push({Fecha:dayStr(d),Depto:x.dn,Sector:SECT[x.s].n,"Avance real %":r1(x.avg),"Programado %":r1(x.exp),Estado:x.state}));
+ S["Reporte diario"]=dc.rows.map(r=>({Fecha:dayStr(Dc),Depto:r.dept,Partida:r.part,Antes:r.from,Después:r.to,"Cambio":r.to-r.from,Usuarios:r.users}));
+ S["Alertas"]=[...AL.late.map(l=>({Tipo:l.dv?"Partida vencida":"Partida atrasada",Depto:l.dn,Partida:l.name,"Avance %":l.v,"Programado %":l.e,Detalle:l.dv?`${l.dv} día(s) háb. vencida`:""})),...AL.stale.map(l=>({Tipo:"Sin movimiento",Depto:l.dn,Partida:l.name,"Avance %":l.v,"Programado %":"",Detalle:l.never?`sin registros, ${l.ds} día(s) háb. desde su inicio`:`${l.ds} día(s) háb. sin cambios`}))];
+ S["Historial"]=[...LA].reverse().map(l=>({Fecha:hf(l.t),Depto:l.dept,Partida:l.part,Anterior:l.from,Nuevo:l.to,Usuario:l.name||l.user}));
+ S["Mano de obra"]=mo.map(r=>({Fecha:r.fecha,Sector:SECT[r.sector].n,Depto:r.dept,Partida:r.part,Especialidad:r.especialidad,Trabajadores:r.cantidad,Registró:r.name||r.username}));
+ return S}
+// ===== /CALC =====
 // ===== persistencia =====
 const chain={};
 let inflight=0;
@@ -97,28 +146,96 @@ function save(dn,i,to){const from=val(dn,i);if(from===to||!me||!canWrite(dn))ret
  chain[dn]=(chain[dn]||Promise.resolve()).then(async()=>{const r=await sb.rpc("set_avance",{p_dept:dn,p_i:i,p_to:to,p_part:SECT[DEPTS.find(x=>x.n===dn).s].P[i][0]});if(r.error)throw r.error}).catch(e=>{alert("No se pudo guardar: "+e.message);sig=""}).finally(()=>{inflight--;poll()})}
 // ===== vistas =====
 function bar(p,exp){return`<div class="bar"><i class="${col(p)}" style="width:${p}%"></i>${exp!=null?`<u style="left:${exp}%" title="Programado ${Math.round(exp)}%"></u>`:""}</div>`}
-const stTag=s=>`<span class="tag ${s==="Atrasado"?"r":s==="Adelantado"?"g":"y"}" style="${s==="Conforme"?"background:#4a7fb5":""}">${s}</span>`;
-function dash(){const A=all(),t=today();const sa=A.filter(x=>x.s==="SA"),hu=A.filter(x=>x.s==="HU");
+const stCls=s=>s==="Atrasado"?"r":s==="Adelantado"?"g":"y";
+const stTag=s=>`<span class="tag ${stCls(s)}" style="${s==="Conforme"?"background:#4a7fb5":""}">${s}</span>`;
+const sgn=n=>(n>=0?"+":"")+n.toFixed(1);
+function card(x){return`<div class="card dep ${stCls(x.state)}" onclick="openDep(${x.dn})"><div class="row"><h3>Depto ${x.dn}</h3>${stTag(x.state)}</div>
+ <div class="row"><div><div class="mut">Real</div><b style="font-size:21px">${x.avg.toFixed(0)}%</b></div><div><div class="mut">Programado</div><b style="font-size:21px">${x.exp.toFixed(0)}%</b></div><div><div class="mut">Diferencia</div><b style="font-size:21px;color:var(--${x.dev<-TOL?"r":x.dev>TOL?"g":"tx"})">${sgn(x.dev)}</b></div></div>
+ ${bar(x.avg,x.exp)}<div class="mut" style="margin-top:6px">Terminadas ${x.done} · En ejecución ${x.run} · Pendientes ${x.pend}</div><div class="mut">${lagTxt(x.dd)}${x.nodate.length?` · ${x.nodate.length} sin fecha (pendiente de configuración)`:""}</div></div>`}
+function dash(){const D=today(),A=all(),AL=alertItems(D),sa=A.filter(x=>x.s==="SA"),hu=A.filter(x=>x.s==="HU");
  const term=A.filter(x=>x.avg>=100).length,ej=A.filter(x=>x.avg>0&&x.avg<100).length,pen=A.filter(x=>x.avg===0).length;
- const pT=A.reduce((a,x)=>a+x.done,0),pR=A.reduce((a,x)=>a+x.run,0),pP=A.reduce((a,x)=>a+x.pend,0);
- const tot=mean(A.map(x=>x.avg)),exp=mean(A.map(x=>x.exp)),dev=tot-exp,left=Math.max(0,DEADLINE-t),bl=t>DEADLINE?0:bd(Math.max(t,1),DEADLINE);
- const cumple=dev>=-5?"En curso de cumplir":dev>=-15?"En riesgo":"Riesgo alto de incumplir";
+ const pT=sum(A.map(x=>x.done)),pR=sum(A.map(x=>x.run)),pP=sum(A.map(x=>x.pend));
+ const tot=mean(A.map(x=>x.avg)),exp=mean(A.map(x=>x.exp)),dev=mean(A.map(x=>x.dev)),lg=lagAll(A,D),left=Math.max(0,DEADLINE-D),bl=D>DEADLINE?0:bd(Math.max(D,1),DEADLINE);
+ const cumple=dev>=-TOL?"En curso de cumplir":dev>=-15?"En riesgo":"Riesgo alto de incumplir";
  const k=(n,l)=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
  return`<div class="grid">${k(20,"Departamentos")}${k(term,"Terminados")}${k(ej,"En ejecución")}${k(pen,"Pendientes")}${k(pT,"Partidas terminadas")}${k(pR,"Partidas en ejecución")}${k(pP,"Partidas pendientes")}</div>
- <h2>Avance y cumplimiento · entrega 30.11.2026</h2><div class="cols">
- <div class="card"><h3>Avance general: ${tot.toFixed(1)}%</h3>${bar(tot,exp)}<div class="mut">Línea negra = avance programado hoy (${exp.toFixed(1)}%)</div>
- <p>${stTag(dev>=10?"Adelantado":dev>=-15?"Conforme":"Atrasado")} Desvío: ${dev>=0?"+":""}${dev.toFixed(1)} pts</p></div>
- <div class="card"><h3>Fecha de entrega</h3><div class="kpi"><div class="n">${left} días</div><div class="l">corridos al 30 nov · ${bl} hábiles</div></div><p><span class="tag ${dev>=-5?"g":dev>=-15?"y":"r"}">${cumple}</span></p></div>
- <div class="card"><h3>San Antonio vs Huérfanos</h3>${[["San Antonio",sa],["Huérfanos",hu]].map(([n,a])=>`<div class="row"><span>${n}</span><b>${mean(a.map(x=>x.avg)).toFixed(1)}%</b></div>${bar(mean(a.map(x=>x.avg)),mean(a.map(x=>x.exp)))}<div style="height:8px"></div>`).join("")}</div></div>
+ <h2>Avance programado vs real · entrega 30.11.2026</h2><div class="cols">
+ <div class="card"><h3>Avance general real: ${tot.toFixed(1)}%</h3>${bar(tot,exp)}<div class="mut">Línea negra = programado a hoy (${exp.toFixed(1)}%)</div>
+ <p>${stTag(stateOf(dev))} Diferencia: ${sgn(dev)} pts · ${lagTxt(lg)}</p></div>
+ <div class="card"><h3>Fecha de entrega</h3><div class="kpi"><div class="n">${left} días</div><div class="l">corridos al 30 nov · ${bl} hábiles</div></div><p><span class="tag ${dev>=-TOL?"g":dev>=-15?"y":"r"}">${cumple}</span></p></div>
+ <div class="card"><h3>San Antonio vs Huérfanos</h3>${[["San Antonio",sa],["Huérfanos",hu]].map(([n,a])=>`<div class="row"><span>${n}</span><b>${mean(a.map(x=>x.avg)).toFixed(1)}% <span class="mut">prog. ${mean(a.map(x=>x.exp)).toFixed(1)}%</span></b></div>${bar(mean(a.map(x=>x.avg)),mean(a.map(x=>x.exp)))}<div style="height:8px"></div>`).join("")}</div></div>
  <h2>Avance por departamento</h2><div class="card">${[...A].sort((a,b)=>a.dn-b.dn).map(x=>`<div class="row" style="margin:5px 0;cursor:pointer" onclick="openDep(${x.dn})"><span style="width:46px"><b>${x.dn}</b></span><div style="flex:1">${bar(x.avg,x.exp)}</div><span style="width:48px;text-align:right">${x.avg.toFixed(0)}%</span>${stTag(x.state)}</div>`).join("")}</div>
- <h2>Departamentos con riesgo</h2><div class="card">${A.filter(x=>x.risk).sort((a,b)=>a.dev-b.dev).map(x=>`<div class="row pt" onclick="openDep(${x.dn})" style="cursor:pointer"><span><b>Depto ${x.dn}</b> · ${SECT[x.s].n}<br><span class="mut">${x.late} partida(s) atrasada(s) · ${x.vencidas.length} vencida(s)</span></span><span>${x.dev.toFixed(0)} pts ${stTag(x.state)}</span></div>`).join("")||"<span class='mut'>Sin departamentos en riesgo según la programación.</span>"}</div>`}
-function sector(k){const S=SECT[k],A=S.d.map(dstat);return`<h2>${S.n} · ${mean(A.map(x=>x.avg)).toFixed(1)}%</h2><div class="grid w">${A.map(x=>`<div class="card dep ${col(x.avg)}" onclick="openDep(${x.dn})"><div class="row"><h3>Depto ${x.dn}</h3>${stTag(x.state)}</div><div style="font-size:24px;font-weight:700">${x.avg.toFixed(0)}%</div>${bar(x.avg,x.exp)}<div class="mut" style="margin-top:6px">Terminadas ${x.done} · En ejecución ${x.run} · Pendientes ${x.pend}</div></div>`).join("")}</div>`}
-function depto(){const dn=sel,D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,s=dstat(dn),t=today(),canEdit=canWrite(dn);
+ <h2>Dónde concentrar los esfuerzos</h2><div class="cols">
+ <div class="card"><h3>Partidas atrasadas o vencidas (${AL.late.length})</h3>${AL.late.slice(0,8).map(l=>`<div class="row pt" onclick="openDep(${l.dn})" style="cursor:pointer"><span><b>${l.dn}</b> · ${esc(l.name)}<br><span class="mut">${l.dv?`vencida hace ${l.dv} día(s) háb.`:"atrasada"} · programado ${l.e}%</span></span><span class="tag r">${l.v}%</span></div>`).join("")||"<span class='mut'>Ninguna según la programación.</span>"}${AL.late.length>8?`<div class="mut">y ${AL.late.length-8} más en Alertas</div>`:""}</div>
+ <div class="card"><h3>Departamentos a priorizar</h3>${[...A].sort((a,b)=>a.dev-b.dev).slice(0,5).map(x=>`<div class="row pt" onclick="openDep(${x.dn})" style="cursor:pointer"><span><b>Depto ${x.dn}</b> · ${SECT[x.s].n}<br><span class="mut">${lagTxt(x.dd)} · ${x.vencidas.length} vencida(s)</span></span><span>${sgn(x.dev)} ${stTag(x.state)}</span></div>`).join("")}</div>
+ <div class="card"><h3>Sin movimiento hace ${STALE}+ días háb. (${AL.stale.length})</h3>${AL.stale.slice(0,5).map(l=>`<div class="row pt" onclick="openDep(${l.dn})" style="cursor:pointer"><span><b>${l.dn}</b> · ${esc(l.name)}<br><span class="mut">${l.never?"sin registros desde su inicio":"sin cambios"} · ${l.ds} día(s) háb.</span></span><span class="tag y">${l.v}%</span></div>`).join("")||"<span class='mut'>Ninguna.</span>"}</div></div>`}
+function sector(k){const S=SECT[k],A=S.d.map(d=>dstat(d));return`<h2>${S.n} · ${mean(A.map(x=>x.avg)).toFixed(1)}% <span class="mut">programado ${mean(A.map(x=>x.exp)).toFixed(1)}%</span></h2><div class="grid w">${A.map(card).join("")}</div>`}
+// Control general
+let cgf="todos";
+function cgBody(){const D=today(),A=all().map(x=>({...x,prox:x.avg<100&&(bd(D,DEADLINE)<=PROX||SECT[x.s].P.some((p,i)=>p[3]&&p[3]>D&&bd(D+1,p[3])<=PROX&&val(x.dn,i)<100))}));
+ const F={todos:()=>1,SA:x=>x.s==="SA",HU:x=>x.s==="HU",atrasados:x=>x.state==="Atrasado",terminados:x=>x.avg>=100,proximos:x=>x.prox};
+ const ch=[["todos","Todos"],["SA","Solo San Antonio"],["HU","Solo Huérfanos"],["atrasados","Atrasados"],["terminados","Terminados"],["proximos","Próximos a entrega"]];
+ const R=A.filter(F[cgf]);const sec=k=>{const r=R.filter(x=>x.s===k);return r.length?`<h2>${SECT[k].n}</h2><div class="grid w">${r.map(card).join("")}</div>`:""};
+ return`<h2>Control general de departamentos</h2><div class="chips">${ch.map(([k,n])=>`<button class="${cgf===k?"on":""}" onclick="cgf='${k}';render()">${n}</button>`).join("")}</div><div class="mut">Mostrando ${R.length} de 20. “Próximos a entrega”: no terminados con alguna partida que vence dentro de ${PROX} días hábiles (o faltan ${PROX} o menos para el 30.11). Tolerancia de “Conforme”: ±${TOL} pts.</div>${sec("SA")}${sec("HU")}${R.length?"":"<p class='mut'>Ningún departamento cumple el filtro.</p>"}`}
+// Reporte diario
+let dD=null;
+function diarioBody(){const D=dD??curD(),dc=dayChanges(D),A1=all(D,dc.S1),A0=all(D-1,dc.S0),sn=dc.sn;
+ const adv=dc.rows.filter(r=>r.to>r.from),fin=adv.filter(r=>r.to===100),back=dc.rows.filter(r=>r.to<r.from);
+ const g1=mean(A1.map(x=>x.avg)),g0=mean(A0.map(x=>x.avg)),us=[...new Set(dc.rows.flatMap(r=>r.users.split(", ")))];
+ const k=(n,l)=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+ const li=r=>`<tr><td>${r.dept}</td><td>${esc(r.part)}</td><td>${r.from}% → ${r.to}%</td><td>${esc(r.users)}</td></tr>`;
+ const tb=(t,rows)=>`<h3 style="margin-top:12px">${t} (${rows.length})</h3><div class="wrap"><table><tr><th>Depto</th><th>Partida</th><th>Cambio</th><th>Usuario</th></tr>${rows.map(li).join("")||"<tr><td colspan=4 class=mut>Ninguna</td></tr>"}</table></div>`;
+ const e=evo(sn,Math.min(D,30));
+ return`<h2>Reporte diario de avance</h2><div class="row" style="justify-content:flex-start"><input type="date" style="max-width:190px" min="2026-11-01" max="2026-11-30" value="${dayStr(D)}" onchange="dD=dayOf(this.value)||null;render()"><span class="mut">Avance acumulado al cierre del día, reconstruido desde el historial de modificaciones.</span></div>
+ <div class="grid" style="margin-top:10px">${k(g1.toFixed(1)+"%","Avance general al cierre")}${k(g0.toFixed(1)+"%","Día anterior")}${k(sgn(g1-g0)+" pts","Avance de la jornada")}${k(dc.rows.length,"Partidas modificadas")}${k(fin.length,"Finalizadas en el día")}${k(us.length,"Usuarios que actualizaron")}</div>
+ <div class="card" style="margin-top:10px"><h3>Avance por departamento en la jornada</h3><div class="wrap"><table><tr><th>Depto</th><th>Anterior</th><th>Actual</th><th>Jornada</th><th>Partidas modif.</th><th>Programado</th><th>Estado</th><th>Pendientes</th></tr>${A1.map((x,j)=>`<tr onclick="openDep(${x.dn})" style="cursor:pointer"><td><b>${x.dn}</b></td><td>${A0[j].avg.toFixed(1)}%</td><td>${x.avg.toFixed(1)}%</td><td>${sgn(x.avg-A0[j].avg)}</td><td>${dc.rows.filter(r=>r.dept===x.dn).length}</td><td>${x.exp.toFixed(1)}%</td><td>${stTag(x.state)}</td><td>${x.tot-x.done}</td></tr>`).join("")}</table></div></div>
+ <div class="card" style="margin-top:10px"><h3>Trabajos ejecutados en la jornada</h3>${tb("Partidas que avanzaron",adv)}${tb("Partidas que finalizaron",fin)}${back.length?tb("Correcciones a la baja",back):""}<p class="mut">Partidas que continúan pendientes a esa fecha: ${sum(A1.map(x=>x.tot-x.done))} (de ellas, vencidas según programación: ${sum(A1.map(x=>x.vencidas.length))}).</p></div>
+ <div class="card" style="margin-top:10px"><h3>Evolución día a día (general): real vs programado</h3><div class="wrap"><table><tr><th>Día</th><th>Real</th><th>Programado</th><th>Diferencia</th></tr>${e.filter(x=>x.d>=2).map(x=>`<tr><td>${dayStr(x.d).slice(5)}</td><td>${x.real.toFixed(1)}%</td><td>${x.prog.toFixed(1)}%</td><td>${sgn(x.dev)}</td></tr>`).join("")}</table></div></div>`}
+// Alertas
+function alertasBody(){const D=today(),AL=alertItems(D),A=AL.A,es=espNeeds(AL.late);
+ const rk=A.filter(x=>x.risk).sort((a,b)=>a.dev-b.dev);
+ const tr=(c)=>`<tr onclick="openDep(${c[0]})" style="cursor:pointer">${c.slice(1).map(v=>`<td>${v}</td>`).join("")}</tr>`;
+ return`<h2>Alertas y priorización · entrega 30.11.2026</h2><div class="mut">Criterios: atrasada = avance 25+ pts bajo lo programado o término vencido; sin movimiento = ${STALE}+ días hábiles sin cambios desde que debió iniciar; riesgo = departamento Atrasado (±${TOL} pts) o con partidas atrasadas.</div>
+ <div class="card" style="margin-top:10px"><h3>Departamentos con riesgo de incumplir la entrega (${rk.length})</h3><div class="wrap"><table><tr><th>Depto</th><th>Sector</th><th>Real</th><th>Prog.</th><th>Dif.</th><th>Estado</th><th>Atrasadas</th><th>Vencidas</th></tr>${rk.map(x=>tr([x.dn,x.dn,SECT[x.s].n,x.avg.toFixed(0)+"%",x.exp.toFixed(0)+"%",sgn(x.dev),stTag(x.state),x.late,x.vencidas.length])).join("")||"<tr><td colspan=8 class=mut>Ninguno</td></tr>"}</table></div></div>
+ <div class="card" style="margin-top:10px"><h3>Partidas atrasadas o vencidas (${AL.late.length})</h3><div class="wrap"><table><tr><th>Depto</th><th>Partida</th><th>Avance</th><th>Programado</th><th>Detalle</th></tr>${AL.late.map(l=>tr([l.dn,l.dn,esc(l.name),l.v+"%",l.e+"%",l.dv?`vencida hace ${l.dv} día(s) háb.`:"atrasada"])).join("")||"<tr><td colspan=5 class=mut>Ninguna</td></tr>"}</table></div></div>
+ <div class="card" style="margin-top:10px"><h3>Partidas sin movimiento (${AL.stale.length})</h3><div class="wrap"><table><tr><th>Depto</th><th>Partida</th><th>Avance</th><th>Detalle</th></tr>${AL.stale.map(l=>tr([l.dn,l.dn,esc(l.name),l.v+"%",(l.never?"sin registros desde su inicio programado · ":"")+l.ds+" día(s) háb."])).join("")||"<tr><td colspan=4 class=mut>Ninguna</td></tr>"}</table></div></div>
+ <div class="card" style="margin-top:10px"><h3>Departamentos con menor avance real</h3>${[...A].sort((a,b)=>a.avg-b.avg).slice(0,5).map(x=>`<div class="row" style="margin:5px 0;cursor:pointer" onclick="openDep(${x.dn})"><span style="width:46px"><b>${x.dn}</b></span><div style="flex:1">${bar(x.avg,x.exp)}</div><span style="width:48px;text-align:right">${x.avg.toFixed(0)}%</span></div>`).join("")}</div>
+ <div class="card" style="margin-top:10px"><h3>Especialidades que requieren más mano de obra</h3>${mo.length?(es.length?`<div class="wrap"><table><tr><th>Especialidad</th><th>Partidas atrasadas en que ha trabajado</th><th>Trabajadores-día registrados en ellas</th></tr>${es.map(e=>`<tr><td>${esc(e.e)}</td><td>${e.n}</td><td>${e.td}</td></tr>`).join("")}</table></div><p class="mut">Se calcula solo con los registros reales de mano de obra; las partidas atrasadas sin registros no aparecen aquí.</p>`:"<span class='mut'>Ninguna partida atrasada tiene mano de obra registrada.</span>"):"<span class='mut'>Sin datos: aún no hay registros en el módulo Mano de obra.</span>"}</div>`}
+// Mano de obra
+let moA=null,moB=null,moMin=5;
+function moBody(){if(moErr)return`<h2>Mano de obra</h2><div class="warn">${esc(moErr)}</div>`;
+ const A=moA||dayStr(curD()),B=moB||A,R=mo.filter(r=>r.fecha>=A&&r.fecha<=B),dA=dayOf(A),dB=Math.min(dayOf(B),30),sn=snapsUpTo(dB),S0=sn[Math.max(dA-1,0)],S1=sn[dB];
+ const grp=(f)=>{const m={};R.forEach(r=>{const k=f(r);m[k]=(m[k]||0)+r.cantidad});return Object.entries(m).sort((a,b)=>b[1]-a[1])};
+ const tot=sum(R.map(r=>r.cantidad)),bySec={SA:sum(R.filter(r=>r.sector==="SA").map(r=>r.cantidad)),HU:sum(R.filter(r=>r.sector==="HU").map(r=>r.cantidad))},esp=grp(r=>r.especialidad);
+ const m={};R.forEach(r=>{const k=r.dept+"|"+r.part_i;(m[k]??={dept:r.dept,i:r.part_i,part:r.part,td:0,f:new Set(),es:new Set()});m[k].td+=r.cantidad;m[k].f.add(r.fecha);m[k].es.add(r.especialidad)});
+ const rows=Object.values(m).map(r=>({...r,v:val(r.dept,r.i),gain:sv(S1,r.dept,r.i)-sv(S0,r.dept,r.i)})).sort((a,b)=>b.td-a.td);
+ const poco=rows.filter(r=>r.td>=moMin&&r.gain<=25&&r.v<100);
+ const canAdd=me.role==="admin"||me.role==="editor";const names=[...new Set(mo.map(r=>r.especialidad))].sort();
+ const k=(n,l)=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`;
+ return`<h2>Gestión de mano de obra</h2>
+ ${canAdd?`<div class="card"><h3>Registrar mano de obra</h3><div class="cols"><input id="mo_f" type="date" value="${dayStr(curD())}" min="2026-11-01" max="2026-11-30"><select id="mo_d" onchange="fillPart()">${DEPTS.filter(d=>canWrite(d.n)).map(d=>`<option value="${d.n}">${d.n} · ${SECT[d.s].n}</option>`).join("")}</select><select id="mo_p"></select><input id="mo_e" list="mo_l" placeholder="Especialidad (ej. escribe la que corresponda)"><datalist id="mo_l">${names.map(n=>`<option value="${esc(n)}">`).join("")}</datalist><input id="mo_c" type="number" min="1" max="500" placeholder="Cantidad de trabajadores"></div><p><button class="btn" onclick="addMo()">Registrar</button> <span class="mut">Un registro por especialidad, partida y departamento.</span></p></div>`:""}
+ <div class="row" style="justify-content:flex-start;margin:12px 0;flex-wrap:wrap"><span>Desde</span><input type="date" style="max-width:170px" value="${A}" onchange="moA=this.value;if(!moB||moB<moA)moB=moA;render()"><span>hasta</span><input type="date" style="max-width:170px" value="${B}" onchange="moB=this.value;render()"></div>
+ <div class="grid">${k(tot,"Trabajadores-día en el rango")}${k(bySec.SA,"San Antonio")}${k(bySec.HU,"Huérfanos")}${k(R.length,"Registros")}</div>
+ <div class="cols" style="margin-top:10px"><div class="card"><h3>Distribución por especialidad</h3>${esp.map(([e,n])=>`<div class="row" style="margin:5px 0"><span style="width:130px">${esc(e)}</span><div style="flex:1">${bar(Math.round(100*n/tot),null)}</div><b style="width:38px;text-align:right">${n}</b></div>`).join("")||"<span class='mut'>Sin registros en el rango.</span>"}</div>
+ <div class="card"><h3>Poco avance con mucha mano de obra (${poco.length})</h3><div class="mut" style="margin-bottom:6px">Partidas con al menos <input type="number" min="1" style="width:70px;display:inline;padding:4px" value="${moMin}" onchange="moMin=+this.value||1;render()"> trabajadores-día en el rango y avance de 25 pts o menos. El umbral es un filtro tuyo, no un rendimiento.</div>${poco.map(r=>`<div class="row pt" onclick="openDep(${r.dept})" style="cursor:pointer"><span><b>${r.dept}</b> · ${esc(r.part)}<br><span class="mut">${r.td} trabajadores-día · ${[...r.es].map(esc).join(", ")}</span></span><span>+${r.gain} pts · ${r.v}%</span></div>`).join("")||"<span class='mut'>Ninguna.</span>"}</div></div>
+ <div class="card" style="margin-top:10px"><h3>Avance obtenido vs mano de obra asignada (rango)</h3><div class="wrap"><table><tr><th>Depto</th><th>Partida</th><th>Trabajadores-día</th><th>Días con registro</th><th>Avance en el rango</th><th>Avance actual</th></tr>${rows.map(r=>`<tr><td>${r.dept}</td><td>${esc(r.part)}</td><td>${r.td}</td><td>${r.f.size}</td><td>${r.gain>=0?"+":""}${r.gain} pts</td><td>${r.v}%</td></tr>`).join("")||"<tr><td colspan=6 class=mut>Sin registros en el rango.</td></tr>"}</table></div></div>
+ <div class="card" style="margin-top:10px"><h3>Registros del rango</h3><div class="wrap"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Especialidad</th><th>Cant.</th><th>Registró</th><th></th></tr>${[...R].reverse().slice(0,200).map(r=>`<tr><td>${r.fecha}</td><td>${r.dept}</td><td>${esc(r.part)}</td><td>${esc(r.especialidad)}</td><td>${r.cantidad}</td><td>${esc(r.name||r.username||"")}</td><td>${me.role==="admin"||(r.user_id===me.id&&canAdd)?`<button class="btn alt" onclick="delMo(${r.id})">Eliminar</button>`:""}</td></tr>`).join("")||"<tr><td colspan=7 class=mut>Sin registros.</td></tr>"}</table></div></div>`}
+function fillPart(){const d=+($("#mo_d")||{}).value,D=DEPTS.find(x=>x.n===d),s=$("#mo_p");if(!D||!s)return;s.innerHTML=SECT[D.s].P.map((p,i)=>`<option value="${i}">${esc(p[0])}</option>`).join("")}
+async function addMo(){const dn=+$("#mo_d").value,i=+$("#mo_p").value,esp=$("#mo_e").value.trim(),c=parseInt($("#mo_c").value,10),f=$("#mo_f").value;
+ if(!dn||isNaN(i)||esp.length<2||!(c>0)||!f)return alert("Completa fecha, departamento, partida, especialidad y cantidad.");
+ const D=DEPTS.find(x=>x.n===dn),r=await sb.rpc("add_mano_obra",{p_fecha:f,p_dept:dn,p_esp:esp,p_i:i,p_part:SECT[D.s].P[i][0],p_cant:c});if(r.error)return alert(r.error.message);$("#mo_c").value="";sig="";poll()}
+async function delMo(id){if(!confirm("¿Eliminar este registro?"))return;const r=await sb.rpc("del_mano_obra",{p_id:id});if(r.error)alert(r.error.message);sig="";poll()}
+function depto(){const dn=sel,D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,s=dstat(dn),t=today(),canEdit=canWrite(dn),sn=snapsUpTo(curD()),e=evo(sn,curD(),dn).filter(x=>x.d>=2),HL=logs.filter(l=>l.dept===dn).slice(0,150);
  return`<button class="btn alt" onclick="view='${D.s}';render()">← ${SECT[D.s].n}</button><h2>Departamento ${dn} · ${s.avg.toFixed(1)}% ${stTag(s.state)}</h2>${bar(s.avg,s.exp)}
- <div class="card" style="margin-top:10px">${P.map((p,i)=>{const v=val(dn,i),e=expected(p,t),venc=p[3]&&t>p[3]&&v<100,late=e!==null&&v<e-25;
- return`<div class="pt"><div class="row"><b>${esc(p[0])}</b><span class="tag ${col(v)}">${v}%</span></div><div class="mut">${p[2]?`${p[1]?p[1]+" días · ":""}${fmt(p[2])} → ${fmt(p[3])}${e!==null?` · programado hoy ${e}%`:""}`:"Sin fecha programada (revisar)"}${venc?' · <b style="color:var(--r)">VENCIDA</b>':late?' · <b style="color:var(--r)">atrasada</b>':""}</div>
- <div class="pcts">${STEPS.map(q=>`<button class="p${q}${v===q?" on":""}" ${canEdit?`onclick="save(${dn},${i},${q})"`:"disabled"}>${q}%</button>`).join("")}</div></div>`}).join("")}</div>`}
-function hist(){return`<h2>Historial de actualizaciones</h2><div class="card wrap"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${logs.map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6 class=mut>Sin cambios registrados.</td></tr>"}</table></div>`}
+ <div class="mut" style="margin:6px 0">Programado a hoy: ${s.exp.toFixed(1)}% · diferencia ${sgn(s.dev)} pts · ${lagTxt(s.dd)}${s.nodate.length?` · Sin fecha en los PDF (pendiente de configuración): ${s.nodate.map(esc).join(", ")}`:""}</div>
+ <div class="card" style="margin-top:10px">${P.map((p,i)=>{const v=val(dn,i),e=expected(p,t),venc=p[3]&&t>p[3]&&v<100,late=e!==null&&!p[4]&&v<e-25;
+ return`<div class="pt"><div class="row"><b>${esc(p[0])}</b><span class="tag ${col(v)}">${v}%</span></div><div class="mut">${p[4]?"Ejecutada según el PDF":p[2]?`${p[1]?p[1]+" días · ":""}${fmt(p[2])} → ${fmt(p[3])}${e!==null?` · programado hoy ${e}%`:""}`:"Pendiente de configuración (sin fecha en el PDF)"}${venc?' · <b style="color:var(--r)">VENCIDA</b>':late?' · <b style="color:var(--r)">atrasada</b>':""}</div>
+ <div class="pcts">${STEPS.map(q=>`<button class="p${q}${v===q?" on":""}" ${canEdit?`onclick="save(${dn},${i},${q})"`:"disabled"}>${q}%</button>`).join("")}</div></div>`}).join("")}</div>
+ <h2>Evolución diaria del departamento</h2><div class="card wrap"><table><tr><th>Día</th><th>Real</th><th>Programado</th><th>Diferencia</th></tr>${e.map(x=>`<tr><td>${dayStr(x.d).slice(5)}</td><td>${x.real.toFixed(1)}%</td><td>${x.prog.toFixed(1)}%</td><td>${sgn(x.dev)}</td></tr>`).join("")}</table></div>
+ <h2>Historial del departamento</h2><div class="card wrap"><table><tr><th>Fecha</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${HL.map(l=>`<tr><td>${hf(l.t)}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=5 class=mut>Sin cambios registrados.</td></tr>"}</table></div>`}
+let hfD="",hfF="";
+function hist(){const R=logs.filter(l=>(!hfD||l.dept==hfD)&&(!hfF||ymd(l.t)===dayOf(hfF)));
+ return`<h2>Historial de actualizaciones</h2><div class="cols"><select onchange="hfD=this.value;render()"><option value="">Todos los departamentos</option>${DEPTS.map(d=>`<option ${hfD==d.n?"selected":""}>${d.n}</option>`).join("")}</select><input type="date" value="${hfF}" onchange="hfF=this.value;render()"></div><div class="mut" style="margin:6px 0">${R.length} registros${R.length>400?" (se muestran 400; usa los filtros o exporta a Excel)":""}. El historial nunca se borra ni se reemplaza.</div><div class="card wrap"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${R.slice(0,400).map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6 class=mut>Sin cambios registrados.</td></tr>"}</table></div>`}
 function admin(){return`<h2>Usuarios</h2><div class="card"><div class="cols"><input id="nu" placeholder="Usuario"><input id="nn" placeholder="Nombre"><input id="np" placeholder="Contraseña (mín. 6)"><select id="nr"><option value="editor">Editor (actualiza avances)</option><option value="lectura">Solo lectura</option><option value="sa_edit">San Antonio (actualiza avances)</option><option value="sa_lectura">San Antonio (solo lectura)</option><option value="admin">Administrador</option></select></div><p><button class="btn" onclick="addUser()">Crear usuario</button></p>
  <div class="wrap"><table><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th></tr>${users.map(u=>`<tr><td>${esc(u.user)}</td><td>${esc(u.name)}</td><td><select onchange="setRole('${u.id}',this.value)">${["admin","editor","lectura","sa_edit","sa_lectura"].map(r=>`<option ${r===u.role?"selected":""}>${r}</option>`).join("")}</select></td><td><button class="btn alt" onclick="setActive('${u.id}',${!u.active})">${u.active?"Activo · desactivar":"Inactivo · activar"}</button></td></tr>`).join("")}</table></div></div>
  <div class="warn" style="margin-top:10px">Los permisos se validan en la base de datos (Supabase). Para restablecer la clave de otra persona usa Authentication → Users en el panel de Supabase.</div>`}
@@ -135,20 +252,14 @@ async function doLogin(){try{if(!sb)throw new Error(initErr||"Sin conexión con 
 function openDep(n){if(isSA()&&!SECT.SA.d.includes(n))return;sel=n;view="dep";render();scrollTo(0,0)}
 function logout(){sb.auth.signOut();me=null;render()}
 // ===== Excel =====
-async function exportXls(){const A=all(),t=today(),wb=XLSX.utils.book_new();const add=(n,rows)=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),n);
- add("Resumen",[{Indicador:"Fecha de reporte",Valor:new Date().toLocaleString("es-CL")},{Indicador:"Avance general %",Valor:+mean(A.map(x=>x.avg)).toFixed(1)},{Indicador:"Programado hoy %",Valor:+mean(A.map(x=>x.exp)).toFixed(1)},{Indicador:"San Antonio %",Valor:+mean(A.filter(x=>x.s==="SA").map(x=>x.avg)).toFixed(1)},{Indicador:"Huérfanos %",Valor:+mean(A.filter(x=>x.s==="HU").map(x=>x.avg)).toFixed(1)},{Indicador:"Entrega",Valor:"30-11-2026"}]);
- add("Departamentos",A.map(x=>({Depto:x.dn,Sector:SECT[x.s].n,"Avance %":+x.avg.toFixed(1),"Programado %":+x.exp.toFixed(1),"Desvío pts":+x.dev.toFixed(1),Estado:x.state,Terminadas:x.done,"En ejecución":x.run,Pendientes:x.pend,"Partidas atrasadas":x.late})));
- const pr=[];A.forEach(x=>SECT[x.s].P.forEach((p,i)=>pr.push({Depto:x.dn,Sector:SECT[x.s].n,Partida:p[0],Inicio:fmt(p[2]),Término:fmt(p[3]),"Avance %":val(x.dn,i),"Programado %":expected(p,t)??"Sin fecha"})));
- add("Partidas",pr);add("Pendientes",pr.filter(r=>r["Avance %"]<100));
- add("Historial",logs.map(l=>({Fecha:hf(l.t),Depto:l.dept,Partida:l.part,Anterior:l.from,Nuevo:l.to,Usuario:l.name||l.user})));
- const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});try{const d=await claude.use("downloads");await d.save({filename:"Avance_Victoria.xlsx",data:buf})}catch(e){alert("No se pudo descargar")}}
+async function exportXls(){const S=excelData(),wb=XLSX.utils.book_new();for(const n in S)XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(S[n].length?S[n]:[{Info:"Sin registros"}]),n);const buf=XLSX.write(wb,{type:"array",bookType:"xlsx"});try{const d=await claude.use("downloads");await d.save({filename:"Avance_Victoria.xlsx",data:buf})}catch(e){alert("No se pudo descargar")}}
 // ===== Informes PDF =====
 function informes(){const b=(k,t,d)=>`<div class="card"><h3>${t}</h3><div class="mut" style="margin-bottom:8px">${d}</div><button class="btn" onclick="pdf('${k}',this)">Descargar PDF</button></div>`;
- return`<h2>Informes en PDF (con colores y barras de avance)</h2><div class="cols">${b('dash','Dashboard','Indicadores, cumplimiento al 30.11.2026, sectores, avance por departamento y riesgos.')}${b('SA','Sector San Antonio','Tarjetas de los 10 departamentos.')}${b('HU','Sector Huérfanos','Tarjetas de los 10 departamentos.')}${b('hist','Historial','Registro de modificaciones (últimas 300).')}${b('full','Informe completo','Dashboard, ambos sectores y detalle de partidas de los 20 departamentos.')}</div><p class="mut">El PDF se genera siempre con tema claro para que se imprima bien. Para planillas usa el botón Excel.</p>`}
+ return`<h2>Informes en PDF (con colores y barras de avance)</h2><div class="cols">${b('dash','Dashboard','Indicadores, cumplimiento al 30.11.2026, sectores, avance por departamento y prioridades.')}${b('cg','Control general','Los 20 departamentos con avance real, programado, diferencia y estado (según el filtro elegido).')}${b('diario','Reporte diario','Resumen de la fecha elegida en Reporte diario.')}${b('al','Alertas','Riesgos, partidas atrasadas y sin movimiento.')}${b('mo','Mano de obra','Rango de fechas elegido en Mano de obra.')}${b('SA','Sector San Antonio','Tarjetas de los 10 departamentos.')}${b('HU','Sector Huérfanos','Tarjetas de los 10 departamentos.')}${b('hist','Historial','Últimos 300 registros.')}${b('full','Informe completo','Dashboard, ambos sectores y detalle de partidas de los 20 departamentos.')}</div><p class="mut">El PDF se genera siempre con tema claro. Para planillas usa el botón Excel.</p>`}
 function deptoPrint(dn){const D=DEPTS.find(x=>x.n===dn),P=SECT[D.s].P,s=dstat(dn),t=today();
  return`<div class="sec"><h2>Departamento ${dn} · ${SECT[D.s].n} · ${s.avg.toFixed(1)}% ${stTag(s.state)}</h2><div class="card"><table><tr><th>Partida</th><th>Programada</th><th>Prog. hoy</th><th style="width:32%">Avance</th></tr>${P.map((p,i)=>{const v=val(dn,i),e=expected(p,t);return`<tr><td>${esc(p[0])}</td><td>${p[2]?fmt(p[2])+" → "+fmt(p[3]):"Sin fecha"}</td><td>${e===null?"—":e+"%"}</td><td><div class="row"><div style="flex:1">${bar(v,e)}</div><b>${v}%</b></div></td></tr>`}).join("")}</table></div></div>`}
-function histSecs(){let o="";for(let i=0;i<Math.max(logs.length,1);i+=35)o+=`<div class="sec">${i?"":"<h2>Historial de actualizaciones</h2>"}<div class="card"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${logs.slice(i,i+35).map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6>Sin cambios registrados.</td></tr>"}</table></div></div>`;return o}
-async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"Huérfanos",hist:"Historial",full:"Informe completo"};
+function histSecs(){let o="";for(let i=0;i<Math.max(Math.min(logs.length,300),1);i+=35)o+=`<div class="sec">${i?"":"<h2>Historial de actualizaciones</h2>"}<div class="card"><table><tr><th>Fecha</th><th>Depto</th><th>Partida</th><th>Antes</th><th>Nuevo</th><th>Usuario</th></tr>${logs.slice(i,i+35).map(l=>`<tr><td>${hf(l.t)}</td><td>${l.dept}</td><td>${esc(l.part)}</td><td>${l.from}%</td><td>${l.to}%</td><td>${esc(l.name||l.user)}</td></tr>`).join("")||"<tr><td colspan=6>Sin cambios registrados.</td></tr>"}</table></div></div>`;return o}
+async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"Huérfanos",hist:"Historial",full:"Informe completo",cg:"Control general",diario:"Reporte diario",al:"Alertas",mo:"Mano de obra"};
  const old=btn.textContent;btn.disabled=true;btn.textContent="Generando…";
  const w=document.createElement("div");w.style.cssText="position:fixed;left:-10000px;top:0;width:1000px;padding:16px;background:#fff;color:#1f2326;--bg:#f4f4f2;--card:#fff;--tx:#1f2326;--mut:#6b7177;--bd:#dcdcd8;--g:#2e9d57;--y:#e0a800;--r:#d33a3a;--ac:#c62828;font:15px/1.4 system-ui,sans-serif";
  let h=`<div class="sec"><h1 style="margin:0">Edificio Victoria · Piso 6</h1><div class="mut">${names[kind]} · entrega 30.11.2026 · generado ${new Date().toLocaleString("es-CL")} por ${esc(me.name)}</div></div>`;
@@ -157,6 +268,10 @@ async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"
  if(kind==="HU"||kind==="full")h+=`<div class="sec">${sector("HU")}</div>`;
  if(kind==="full")DEPTS.forEach(d=>h+=deptoPrint(d.n));
  if(kind==="hist")h+=histSecs();
+ if(kind==="cg")h+=`<div class="sec">${cgBody()}</div>`;
+ if(kind==="diario")h+=`<div class="sec">${diarioBody()}</div>`;
+ if(kind==="al")h+=`<div class="sec">${alertasBody()}</div>`;
+ if(kind==="mo")h+=`<div class="sec">${moBody()}</div>`;
  w.innerHTML=h;document.body.appendChild(w);
  try{const doc=new jspdf.jsPDF({unit:"mm",format:"a4"});let y=10,first=true;
   for(const sec of w.querySelectorAll(".sec")){const c=await html2canvas(sec,{scale:2,backgroundColor:"#ffffff"}),hm=c.height*190/c.width;
@@ -169,19 +284,24 @@ async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"
 // ===== render =====
 function render(){const a=$("#app");if(!me){a.innerHTML=login();return}
  if(!allowed(view))view="dash";
- const tabs=isSA()?[["dash","Dashboard"],["SA","San Antonio"],["hist","Historial"]]:[["dash","Dashboard"],["SA","San Antonio"],["HU","Huérfanos"],["hist","Historial"],...(me.role==="admin"?[["inf","Informes PDF"],["admin","Usuarios"]]:[])];
- const body=view==="dash"?dash():view==="SA"||view==="HU"?sector(view):view==="dep"?depto():view==="hist"?hist():view==="inf"?informes():admin();
- a.innerHTML=`<header><b>Victoria · Piso 6</b><nav>${tabs.map(([k,n])=>`<button class="${view===k||(view==="dep"&&SECT[DEPTS.find(x=>x.n===sel).s]&&k===DEPTS.find(x=>x.n===sel).s)?"on":""}" onclick="view='${k}';render()">${n}</button>`).join("")}</nav>${isSA()?"":'<button class="btn alt" onclick="exportXls()">Excel</button>'}<span class="mut" style="color:#ccc">${esc(me.name)}</span><button class="btn alt" onclick="cambiarClave()">Clave</button><button class="btn alt" onclick="logout()">Salir</button></header><main>${body}</main>`}
+ const tabs=isSA()?[["dash","Dashboard"],["SA","San Antonio"],["hist","Historial"]]:[["dash","Dashboard"],["cg","Control general"],["SA","San Antonio"],["HU","Huérfanos"],["diario","Reporte diario"],["al","Alertas"],["mo","Mano de obra"],["hist","Historial"],...(me.role==="admin"?[["inf","Informes PDF"],["admin","Usuarios"]]:[])];
+ const body=view==="dash"?dash():view==="SA"||view==="HU"?sector(view):view==="dep"?depto():view==="hist"?hist():view==="cg"?cgBody():view==="diario"?diarioBody():view==="al"?alertasBody():view==="mo"?moBody():view==="inf"?informes():admin();
+ const sd=view==="dep"?DEPTS.find(x=>x.n===sel).s:"";
+ a.innerHTML=`<header><b>Victoria · Piso 6</b><nav>${tabs.map(([k,n])=>`<button class="${view===k||sd===k?"on":""}" onclick="view='${k}';render()">${n}</button>`).join("")}</nav>${isSA()?"":'<button class="btn alt" onclick="exportXls()">Excel</button>'}<span class="mut" style="color:#ccc">${esc(me.name)}</span><button class="btn alt" onclick="cambiarClave()">Clave</button><button class="btn alt" onclick="logout()">Salir</button></header><main>${body}</main>`;
+ if(view==="mo")fillPart()}
 let sb=null,sig="",initErr="";
-async function loadMe(){const{data:{session}}=await sb.auth.getSession();if(!session)return false;const r=await sb.from("profiles").select("username,name,role,active").eq("id",session.user.id).single();if(r.error||!r.data||!r.data.active)return false;me={user:r.data.username,name:r.data.name||r.data.username,role:r.data.role};return true}
+async function loadMe(){const{data:{session}}=await sb.auth.getSession();if(!session)return false;const r=await sb.from("profiles").select("username,name,role,active").eq("id",session.user.id).single();if(r.error||!r.data||!r.data.active)return false;me={id:session.user.id,user:r.data.username,name:r.data.name||r.data.username,role:r.data.role};return true}
+async function fetchAll(t,c,o){let out=[],f=0;for(;;){const r=await sb.from(t).select(c).order(o,{ascending:true}).range(f,f+999);if(r.error)throw r.error;out=out.concat(r.data);if(r.data.length<1000)break;f+=1000}return out}
 async function poll(){if(!sb)return;try{if(!me&&!(await loadMe()))return;
- const[a,l,u]=await Promise.all([sb.from("avance").select("dept,i,v"),sb.from("log").select("t,dept,i,part,frm,nuevo,username,name").order("t",{ascending:false}).limit(300),me.role==="admin"?sb.from("profiles").select("id,username,name,role,active").order("username"):Promise.resolve({data:[]})]);
- if(a.error||l.error)throw a.error||l.error;
+ const[a,L,u]=await Promise.all([sb.from("avance").select("dept,i,v"),fetchAll("log","id,t,dept,i,part,frm,nuevo,username,name","id"),me.role==="admin"?sb.from("profiles").select("id,username,name,role,active").order("username"):Promise.resolve({data:[]})]);
+ if(a.error)throw a.error;
+ let M=[],err="";if(!isSA()){try{M=await fetchAll("mano_obra","id,fecha,sector,dept,especialidad,part_i,part,cantidad,username,name,user_id","id")}catch(e){err="Falta ejecutar schema_v2.sql en el SQL Editor de Supabase para activar este módulo ("+(e.message||e)+")"}}
  const p={};a.data.forEach(r=>{(p["d"+r.dept]??={})[r.i]=r.v});
- const lg=l.data.map(x=>({t:new Date(x.t).getTime(),dept:x.dept,i:x.i,part:x.part,from:x.frm,to:x.nuevo,user:x.username,name:x.name}));
+ const la=L.map(x=>({id:x.id,t:new Date(x.t).getTime(),dept:x.dept,i:x.i,part:x.part,from:x.frm,to:x.nuevo,user:x.username,name:x.name}));
  const us=(u.data||[]).map(x=>({id:x.id,user:x.username,name:x.name,role:x.role,active:x.active}));
- const g=JSON.stringify([p,lg.length,lg[0]&&lg[0].t,us,me]);logs=lg;users=us;if(inflight===0)prog=p;ready=true;
- const f=document.activeElement;if((g!==sig||!$("header"))&&!(f&&["nu","nn","np"].includes(f.id))){sig=g;render()}}catch(e){}}
+ const g=JSON.stringify([p,la.length,la.length&&la[la.length-1].id,us,me,M.length,M.length&&M[M.length-1].id,err]);
+ LA=la;logs=[...la].reverse();users=us;mo=M;moErr=err;if(inflight===0)prog=p;ready=true;
+ const f=document.activeElement;if((g!==sig||!$("header"))&&!(f&&/^(nu|nn|np|mo_)/.test(f.id||""))){sig=g;render()}}catch(e){}}
 window.claude={use:async()=>({save:async({filename,data})=>{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([data]));a.download=filename;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}})};
 (async function init(){render();
  if(SUPABASE_URL.startsWith("PEGA")){$("#lerr").textContent="Falta configurar SUPABASE_URL y SUPABASE_KEY al inicio de este script.";return}
@@ -191,7 +311,7 @@ window.claude={use:async()=>({save:async({filename,data})=>{const a=document.cre
   if(K.length<30)throw new Error("La clave parece incompleta (largo "+K.length+")");
   sb=supabase.createClient(U,K)}catch(e){initErr=e.message;$("#lerr").textContent=initErr;return}
  let t=null;const deb=()=>{clearTimeout(t);t=setTimeout(poll,300)};
- sb.channel("victoria").on("postgres_changes",{event:"*",schema:"public",table:"avance"},deb).on("postgres_changes",{event:"*",schema:"public",table:"log"},deb).subscribe();
+ sb.channel("victoria").on("postgres_changes",{event:"*",schema:"public",table:"avance"},deb).on("postgres_changes",{event:"*",schema:"public",table:"log"},deb).on("postgres_changes",{event:"*",schema:"public",table:"mano_obra"},deb).subscribe();
  await poll();setInterval(poll,20000)})();
 </script>
 </body>
