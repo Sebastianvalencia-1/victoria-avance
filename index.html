@@ -41,6 +41,31 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px;borde
 .warn{background:#fff3cd;color:#5c4400;padding:8px 10px;border-radius:6px;font-size:13px}
 .cols{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.chips button{border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:16px;padding:6px 12px;font:inherit;cursor:pointer}.chips button.on{background:var(--hd);color:#fff}
+
+input,select{font-size:16px}
+.only-m{display:none}
+@media (max-width:760px){
+body:not(.pdf) header{padding:6px 8px;gap:6px 6px}
+body:not(.pdf) header b{flex:1;font-size:14px;white-space:nowrap}
+body:not(.pdf) header .btn{padding:6px 10px;font-size:13px}
+body:not(.pdf) .uname{display:none}
+body:not(.pdf) nav{order:3;flex:1 1 100%;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;gap:4px;scrollbar-width:none;padding-bottom:2px}
+body:not(.pdf) nav::-webkit-scrollbar{display:none}
+body:not(.pdf) nav button{flex:0 0 auto;white-space:nowrap;padding:8px 12px;font-size:14px;background:rgba(255,255,255,.08)}
+body:not(.pdf) nav button.on{background:var(--ac)}
+body:not(.pdf) main{padding:10px 10px 96px}
+body:not(.pdf) h2{font-size:16px;margin:14px 0 6px}
+body:not(.pdf) .grid{grid-template-columns:repeat(2,1fr)}
+body:not(.pdf) .grid.w{grid-template-columns:1fr}
+body:not(.pdf) .cols{grid-template-columns:1fr}
+body:not(.pdf) .kpi .n{font-size:22px}
+body:not(.pdf) .pcts button{padding:12px 0;font-size:15px}
+body:not(.pdf) td,body:not(.pdf) th{padding:6px 5px;font-size:12px}
+body:not(.pdf) .login{margin:6vh auto;padding:0 10px}
+body:not(.pdf) .only-m{display:block}
+body:not(.pdf) .only-d{display:none}
+}
+body.pdf .only-m{display:none!important}body.pdf .only-d{display:block!important}
 </style>
 </head>
 <body>
@@ -241,11 +266,14 @@ function gpBody(){const R=globalRows(),F={todas:()=>1,SA:r=>r.sa!==null,HU:r=>r.
  let L=R.filter(F[gpf]);if(gpo==="mas")L=[...L].sort((a,b)=>b.g-a.g);if(gpo==="atraso")L=[...L].sort((a,b)=>a.dev-b.dev);
  const ch=[["todas","Todas"],["SA","San Antonio"],["HU","Huérfanos"],["term","Terminadas 100%"],["parc","Avance parcial"],["nuevo","Sin comenzar"]],so=[["prog","Orden de la programación"],["mas","Más avanzadas"],["atraso","Mayor atraso vs programado"]];
  const pc=v=>v===null?'<span class="mut">No aplica</span>':v.toFixed(1)+"%";
- const det=r=>{const sec=k=>`<div class="mut" style="margin:6px 0 4px">${SECT[k].n}</div><div class="grid">${SECT[k].d.map(dn=>{const c=r.cells.find(z=>z.dn===dn);return c?`<div class="card" style="padding:8px;cursor:pointer" onclick="openDep(${dn})"><div class="row"><b>${dn}</b><span class="tag ${col(c.v)}">${c.v}%</span></div>${bar(c.v,c.e)}</div>`:`<div class="card" style="padding:8px"><b>${dn}</b><div class="mut">No contemplada</div></div>`}).join("")}</div>`;return`<tr><td colspan="7" style="background:var(--bg)">${sec("SA")}${sec("HU")}</td></tr>`};
+ const detB=r=>{const sec=k=>`<div class="mut" style="margin:6px 0 4px">${SECT[k].n}</div><div class="grid">${SECT[k].d.map(dn=>{const c=r.cells.find(z=>z.dn===dn);return c?`<div class="card" style="padding:8px;cursor:pointer" onclick="openDep(${dn})"><div class="row"><b>${dn}</b><span class="tag ${col(c.v)}">${c.v}%</span></div>${bar(c.v,c.e)}</div>`:`<div class="card" style="padding:8px"><b>${dn}</b><div class="mut">No contemplada</div></div>`}).join("")}</div>`;return sec("SA")+sec("HU")};
+ const det=r=>`<tr><td colspan="7" style="background:var(--bg)">${detB(r)}</td></tr>`;
+ const mc=r=>`<div class="card" style="margin-top:8px" onclick="gpSel=gpSel===${r.id}?null:${r.id};render()"><div class="row"><b>${esc(r.name)}</b><b>${r.g.toFixed(1)}%</b></div>${bar(r.g,r.prog)}<div class="mut" style="margin-top:6px">San Antonio ${pc(r.sa)} · Huérfanos ${pc(r.hu)}</div><div class="mut">Terminados ${r.done} · En ejecución ${r.run} · Pendientes ${r.pend} ${r.prog!==null?stTag(stateOf(r.dev)):""}</div>${gpSel===r.id?`<div onclick="event.stopPropagation()" style="margin-top:8px">${detB(r)}</div>`:""}</div>`;
  const W=sum(R.map(r=>r.g*r.n))/sum(R.map(r=>r.n)),DG=mean(all().map(x=>x.avg));
  return`<h2>Avance Global por Partida</h2><div class="chips">${ch.map(([k,n])=>`<button class="${gpf===k?"on":""}" onclick="gpf='${k}';render()">${n}</button>`).join("")}</div><div class="chips">${so.map(([k,n])=>`<button class="${gpo===k?"on":""}" onclick="gpo='${k}';render()">${n}</button>`).join("")}</div>
  <div class="mut">${L.length} de ${R.length} partidas. Avance global = promedio de los departamentos donde la partida se ejecuta. Toca una partida para ver los 20 departamentos. La línea negra marca lo programado a hoy.</div>
- <div class="card wrap" style="margin-top:8px"><table><tr><th>Partida</th><th>San Antonio</th><th>Huérfanos</th><th style="min-width:150px">Avance global</th><th>Terminados</th><th>En ejecución</th><th>Pendientes</th></tr>${L.map(r=>`<tr onclick="gpSel=gpSel===${r.id}?null:${r.id};render()" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="mut">se ejecuta en ${r.n} deptos ${r.prog!==null?stTag(stateOf(r.dev)):""}</div></td><td>${pc(r.sa)}</td><td>${pc(r.hu)}</td><td><b>${r.g.toFixed(1)}%</b>${bar(r.g,r.prog)}</td><td>${r.done}</td><td>${r.run}</td><td>${r.pend}</td></tr>${gpSel===r.id?det(r):""}`).join("")||"<tr><td colspan=7 class=mut>Ninguna partida cumple el filtro.</td></tr>"}</table></div>
+ <div class="card wrap only-d" style="margin-top:8px"><table><tr><th>Partida</th><th>San Antonio</th><th>Huérfanos</th><th style="min-width:150px">Avance global</th><th>Terminados</th><th>En ejecución</th><th>Pendientes</th></tr>${L.map(r=>`<tr onclick="gpSel=gpSel===${r.id}?null:${r.id};render()" style="cursor:pointer"><td><b>${esc(r.name)}</b><div class="mut">se ejecuta en ${r.n} deptos ${r.prog!==null?stTag(stateOf(r.dev)):""}</div></td><td>${pc(r.sa)}</td><td>${pc(r.hu)}</td><td><b>${r.g.toFixed(1)}%</b>${bar(r.g,r.prog)}</td><td>${r.done}</td><td>${r.run}</td><td>${r.pend}</td></tr>${gpSel===r.id?det(r):""}`).join("")||"<tr><td colspan=7 class=mut>Ninguna partida cumple el filtro.</td></tr>"}</table></div>
+ <div class="only-m">${L.map(mc).join("")||"<p class=mut>Ninguna partida cumple el filtro.</p>"}</div>
  <p class="mut">Promedio de todas las partidas ponderado por departamentos: ${W.toFixed(2)}%. Avance general del Dashboard (promedio de los 20 departamentos): ${DG.toFixed(2)}%.${Math.abs(W-DG)>0.005?" Difieren porque los departamentos no tienen la misma cantidad de partidas.":" Ambos coinciden."}</p>`}
 function gpDash(){if(isSA())return"";const R=globalRows(),li=(r,t)=>`<div class="row" style="margin:5px 0;cursor:pointer" onclick="view='gp';render()"><span style="flex:1">${esc(r.name)}</span><div style="width:90px">${bar(r.g,r.prog)}</div><b style="width:96px;text-align:right">${t}</b></div>`;
  return`<h2>Avance global por partida</h2><div class="cols"><div class="card"><h3>Más avanzadas</h3>${[...R].sort((a,b)=>b.g-a.g).slice(0,5).map(r=>li(r,r.g.toFixed(0)+"%")).join("")}</div><div class="card"><h3>Mayor atraso vs programado</h3>${[...R].filter(r=>r.prog!==null).sort((a,b)=>a.dev-b.dev).slice(0,5).map(r=>li(r,r.g.toFixed(0)+"% · "+sgn(r.dev))).join("")}</div></div><p><button class="btn alt" onclick="view='gp';render()">Ver todas las partidas</button></p>`}
@@ -297,7 +325,7 @@ async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"
  if(kind==="diario")h+=`<div class="sec">${diarioBody()}</div>`;
  if(kind==="al")h+=`<div class="sec">${alertasBody()}</div>`;
  if(kind==="mo")h+=`<div class="sec">${moBody()}</div>`;
- w.innerHTML=h;document.body.appendChild(w);
+ w.innerHTML=h;document.body.appendChild(w);document.body.classList.add("pdf");
  try{const doc=new jspdf.jsPDF({unit:"mm",format:"a4"});let y=10,first=true;
   for(const sec of w.querySelectorAll(".sec")){const c=await html2canvas(sec,{scale:2,backgroundColor:"#ffffff"}),hm=c.height*190/c.width;
    if(hm<=277){if(y+hm>287&&!first){doc.addPage();y=10}doc.addImage(c.toDataURL("image/jpeg",.92),"JPEG",10,y,190,hm);y+=hm+4}
@@ -305,15 +333,15 @@ async function pdf(kind,btn){const names={dash:"Dashboard",SA:"San Antonio",HU:"
    first=false}
   const d=await claude.use("downloads");await d.save({filename:"Victoria_"+names[kind].replace(/ /g,"_")+"_"+new Date().toISOString().slice(0,10)+".pdf",data:doc.output("arraybuffer")});
  }catch(e){alert("No se pudo generar el PDF: "+(e&&e.message||e))}
- w.remove();btn.disabled=false;btn.textContent=old}
+ w.remove();document.body.classList.remove("pdf");btn.disabled=false;btn.textContent=old}
 // ===== render =====
 function render(){const a=$("#app");if(!me){a.innerHTML=login();return}
  if(!allowed(view))view="dash";
  const tabs=isSA()?[["dash","Dashboard"],["SA","San Antonio"],["hist","Historial"]]:[["dash","Dashboard"],["cg","Control general"],["gp","Avance Global por Partida"],["SA","San Antonio"],["HU","Huérfanos"],["diario","Reporte diario"],["al","Alertas"],["mo","Mano de obra"],["hist","Historial"],...(me.role==="admin"?[["inf","Informes PDF"],["admin","Usuarios"]]:[])];
  const body=view==="dash"?dash():view==="SA"||view==="HU"?sector(view):view==="dep"?depto():view==="hist"?hist():view==="cg"?cgBody():view==="gp"?gpBody():view==="diario"?diarioBody():view==="al"?alertasBody():view==="mo"?moBody():view==="inf"?informes():admin();
  const sd=view==="dep"?DEPTS.find(x=>x.n===sel).s:"";
- a.innerHTML=`<header><b>Victoria · Piso 6</b><nav>${tabs.map(([k,n])=>`<button class="${view===k||sd===k?"on":""}" onclick="view='${k}';render()">${n}</button>`).join("")}</nav>${isSA()?"":'<button class="btn alt" onclick="exportXls()">Excel</button>'}<span class="mut" style="color:#ccc">${esc(me.name)}</span><button class="btn alt" onclick="cambiarClave()">Clave</button><button class="btn alt" onclick="logout()">Salir</button></header><main>${body}</main>`;
- if(view==="mo")fillPart()}
+ a.innerHTML=`<header><b>Victoria · Piso 6</b><nav>${tabs.map(([k,n])=>`<button class="${view===k||sd===k?"on":""}" onclick="view='${k}';render()">${n}</button>`).join("")}</nav>${isSA()?"":'<button class="btn alt" onclick="exportXls()">Excel</button>'}<span class="mut uname" style="color:#ccc">${esc(me.name)}</span><button class="btn alt" onclick="cambiarClave()">Clave</button><button class="btn alt" onclick="logout()">Salir</button></header><main>${body}</main>`;
+ if(view==="mo")fillPart();const on=document.querySelector("nav .on");if(on&&on.scrollIntoView)on.scrollIntoView({inline:"center",block:"nearest"})}
 let sb=null,sig="",initErr="";
 async function loadMe(){const{data:{session}}=await sb.auth.getSession();if(!session)return false;const r=await sb.from("profiles").select("username,name,role,active").eq("id",session.user.id).single();if(r.error||!r.data||!r.data.active)return false;me={id:session.user.id,user:r.data.username,name:r.data.name||r.data.username,role:r.data.role};return true}
 async function fetchAll(t,c,o){let out=[],f=0;for(;;){const r=await sb.from(t).select(c).order(o,{ascending:true}).range(f,f+999);if(r.error)throw r.error;out=out.concat(r.data);if(r.data.length<1000)break;f+=1000}return out}
